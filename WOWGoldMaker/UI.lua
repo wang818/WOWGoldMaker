@@ -33,10 +33,27 @@ local TAB_H    = 20      -- 页签 / 小按钮高度
 local TAB_W    = 78      -- 专业页签宽度
 local LIST_Y   = -72     -- 列表区顶部
 local LIST_BOT = 10      -- 列表区距面板底部
-local ROW_H    = 32      -- 列表行高 (商品两行; 材料格是图标+名字+金额三行)
+-- 列表改成「可变高的块」: 每条配方 = 一行商品 + 若干行材料 (一样材料一行),
+-- 材料行左缩进一个商品图标的宽度, 空出来的那一段画从属虚线连回商品行。
+local PRODUCT_H   = 26   -- 商品行高 (商品名 + 售价 两行)
+local MAT_LINE_H  = 13   -- 材料行高 (一样材料一行)
+local MAT_INDENT  = 22   -- 材料行左缩进 = 商品图标列宽
+local MAT_ICON    = 9    -- 材料行图标尺寸
+local MAT_PRICE_W = 84   -- 材料行右侧金额宽度
+local MAT_RIGHT   = 48   -- 材料行右边界: 让金额右缘与商品行的「盈亏」列对齐 (按钮 40 + 间距 8)
+-- NPC 价格列 (材料行, 夹在材料名与金额之间)
+--   卖价 = 客户端自带的「卖给商人」单价, 只读
+--   买价 = 玩家自己录入的「从商人买」单价, 可点开编辑
+local MAT_SELL_W  = 54   -- 「卖 1银2铜」列宽
+local MAT_BUY_W   = 46   -- 「买 1银2铜」列宽
+local MAT_TAG_GAP = 6    -- 卖价 / 买价 之间的间距 (两个 NPC 价算一组)
+local MAT_PRICE_GAP = 10 -- NPC 价与「本配方金额」之间的间距 (拉开一点, 免得三个数字连成一片)
+local TREE_X      = 7    -- 从属竖虚线的 x (对齐商品图标中心)
+local DASH_MAX    = 26   -- 虚线小段的纹理池上限
 local MAT_CELLS = 4      -- 材料最多 4 项 (烹饪里最多的配方就是 4 项)
 local BAR_W    = 3       -- 滚动指示条宽度
 local BTN_W    = 40      -- 行尾查价按钮宽度
+local SCROLL_STEP = 44   -- 滚轮一格滚多远 (约一个配方块)
 
 -- 行内字号 (整体收小的那一档)
 local F_TITLE  = 10      -- 商品名
@@ -48,6 +65,20 @@ local F_PRICE  = 8       -- 右侧盈亏
 
 local frame, content
 local contentW = BASE_W
+-- 层级排序 (BACKGROUND 最低), 声明要放在 DebugInfo 之前: Lua 里 local 只在其声明之后的
+-- 位置可见, 放到文件后半段的话, 前半段函数里引用到的会是全局 nil。
+local STRATA_ORDER = {
+    BACKGROUND = 1, LOW = 2, MEDIUM = 3, HIGH = 4,
+    DIALOG = 5, FULLSCREEN = 6, FULLSCREEN_DIALOG = 7, TOOLTIP = 8,
+}
+
+-- 每层用的 frame level: 低层 (LOW/MEDIUM) 压到最低, 方便"待在背包下面";
+-- 高层 (HIGH 以上) 抬到 200, 用来盖住 EllesmereUI (背包 HIGH+100、快捷操作层 DIALOG)。
+local STRATA_LEVEL = {
+    BACKGROUND = 0, LOW = 1, MEDIUM = 1,
+    HIGH = 200, DIALOG = 200,
+    FULLSCREEN = 200, FULLSCREEN_DIALOG = 200, TOOLTIP = 200,
+}
 local refs = {}
 local tabs = {}            -- key -> 页签按钮
 local profIcons = {}       -- key -> 页签图标纹理
@@ -58,6 +89,82 @@ local noticeFrame, noticeText, noticeToken   -- 页面内浮层提示
 
 local curKey  = "first-aid"   -- 当前专业
 local curMode = "list"        -- "list" 配方 | "mats" 材料汇总
+
+-- 颜色码剥离: 行内文字带 |cff... 前缀和 ×N 的灰色段, 塞进 tooltip 前要还原成纯文字
+local function PlainText(s)
+    if type(s) ~= "string" then return "" end
+    s = s:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+    return s
+end
+
+-- tooltip 贴鼠标
+--
+-- 原来用 ANCHOR_RIGHT 锚在控件右边: 面板本身贴在屏幕右缘、宽度又占半屏, 鼠标停在行中间时
+-- 提示会盖住材料列, 或者干脆被挤到屏幕外。改成跟随鼠标后, 提示永远出现在光标旁边。
+-- ANCHOR_CURSOR_RIGHT 让提示落在光标右下方一点, 不压住光标; 万一客户端不认这个锚点
+-- (老版本只有 ANCHOR_CURSOR), 用 pcall 退回到最通用的 ANCHOR_CURSOR。
+local function TooltipAtCursor(anchor)
+    anchor = anchor or ns.frame or UIParent
+    local ok = pcall(GameTooltip.SetOwner, GameTooltip, anchor, "ANCHOR_CURSOR_RIGHT")
+    if not ok then
+        pcall(GameTooltip.SetOwner, GameTooltip, anchor, "ANCHOR_CURSOR")
+    end
+end
+
+--------------------------------------------------------------------------- 逐物提示
+--
+-- 提示按「谁被指着」分开: 商品名 → 配方详情, 材料行 → 该材料详情, 图标 → 原生物品提示。
+-- 材料行是块的子 frame, 鼠标从商品行移到材料行上时两者会先后触发 OnLeave / OnEnter,
+-- 顺序不保证, 所以用 tipOwner 记录当前归属: 离开时延时一帧, 只有归属还是自己才关,
+-- 避免把刚接管提示的材料行一起关掉 (表现是「提示一闪一闪」)。
+
+local tipOwner
+
+local function TipBegin(owner)
+    tipOwner = owner
+    TooltipAtCursor(owner)
+    pcall(GameTooltip.ClearLines, GameTooltip)
+end
+
+local function TipEnd(owner)
+    if tipOwner ~= owner then return end          -- 已被别的控件接管, 别抢着关
+    C_Timer.After(0, function()
+        if tipOwner == owner then
+            tipOwner = nil
+            GameTooltip:Hide()
+        end
+    end)
+end
+
+-- 物品信息是否已缓存: 没缓存时 SetItemByID 会显示「正在检索物品信息…」的空壳,
+-- 不如直接用手写标题, 等下一轮悬停再走原生提示
+local function ItemReady(itemID)
+    if not itemID then return false end
+    local ok, name = pcall(GetItemInfo, itemID)
+    return ok and type(name) == "string" and name ~= ""
+end
+
+-- 先用原生物品提示打底 (品质色标题 / 物品等级 / 描述 / 使用效果),
+-- 拿不到缓存就退化成一行手写名字, 保证提示非空
+local function NativeItemTip(itemID, fallbackName)
+    if ItemReady(itemID) then
+        local ok = false
+        if GameTooltip.SetItemByID then
+            ok = pcall(GameTooltip.SetItemByID, GameTooltip, itemID)
+        elseif GameTooltip.SetHyperlink then
+            ok = pcall(GameTooltip.SetHyperlink, GameTooltip, "item:" .. tostring(itemID))
+        end
+        local lines = 0
+        if ok and GameTooltip.NumLines then
+            local okN, n = pcall(GameTooltip.NumLines, GameTooltip)
+            lines = (okN and type(n) == "number") and n or 0
+        end
+        if ok and lines > 0 then return true end
+        pcall(GameTooltip.ClearLines, GameTooltip)
+    end
+    GameTooltip:AddLine(fallbackName or (itemID and ("物品 #" .. tostring(itemID))) or "?", 1, 1, 1)
+    return false
+end
 
 local iconsPending = true
 local iconsTries = 0
@@ -201,15 +308,34 @@ function ns.UI.DebugInfo()
     print("|cffe8c25a[WGM 调试]|r")
     print("  refs.gold:", tostring(refs.gold), "| greeting:", tostring(refs.greeting))
     print("  frame:", tostring(frame ~= nil), "| content:", tostring(content ~= nil))
-    -- 层级排查用: 我们固定 HIGH (在 EllesmereUI 快捷操作层 DIALOG 下面)
+    -- 层级排查用: 面板默认 MEDIUM (待在背包下面), 这里把同层的参照物一起打出来
     if frame then
         print("  层级:", tostring(frame:GetFrameStrata()), "frameLevel:", tostring(frame:GetFrameLevel()))
     end
-    local ah = _G.AuctionHouseFrame
-    if ah and type(ah.GetFrameStrata) == "function" then
-        local ok, st = pcall(ah.GetFrameStrata, ah)
-        print("  拍卖行窗口层级:", ok and tostring(st) or "取不到")
+    local function PrintStrata(label, f2)
+        if not (f2 and type(f2.GetFrameStrata) == "function") then
+            print("  " .. label .. ": 不存在"); return
+        end
+        local okS, st = pcall(f2.GetFrameStrata, f2)
+        local okL, lv = pcall(f2.GetFrameLevel, f2)
+        -- 只有同 strata 时 frame level 才有可比性, 跨层直接比层
+        local rel = "?"
+        if okS and frame then
+            local a = STRATA_ORDER[st] or 0
+            local b = STRATA_ORDER[frame:GetFrameStrata()] or 0
+            if a ~= b then
+                rel = (a > b) and "在面板之上" or "在面板之下"
+            else
+                rel = ((okL and lv or 0) > frame:GetFrameLevel())
+                    and "在面板之上(同层)" or "在面板之下(同层)"
+            end
+        end
+        print("  " .. label .. ":", okS and tostring(st) or "?", "level:", okL and tostring(lv) or "?", "|", rel)
     end
+    PrintStrata("背包 (EUI_MainBagFrame)", _G.EUI_MainBagFrame)
+    PrintStrata("背包 (ContainerFrame1)", _G.ContainerFrame1)
+    PrintStrata("拍卖行窗口", _G.AuctionHouseFrame)
+    PrintStrata("副本手册主窗", _G.DungeonsForever_MainFrame)
     print("  当前专业:", tostring(curKey), "| 模式:", tostring(curMode),
         "| 行池:", tostring(#rows))
     print("  db:", tostring(ns.DB() ~= nil))
@@ -448,37 +574,22 @@ end
 
 --------------------------------------------------------------------------- 构建: 列表
 
--- 行内分栏: 图标 / 商品 / 材料 / 技能 / 价格 / 按钮
--- 右侧一整套是固定宽的, 先把它们扣掉再把剩下的按 36:64 分给商品和材料,
--- 否则材料格会顶到技能列上 (4 样材料时尤其明显)
+-- 行内分栏: 图标 / 商品名 / 技能 / 盈亏 / 查价
+-- 材料不再挤在商品行里 (那样 4 样材料每样只有 30px), 改成竖排在下面, 所以商品行的
+-- 剩余宽度全部给商品名, 长名字基本不会被截断了。
 local ROW_ICON_W = 22    -- 图标列宽度 (含与文字的间距)
 local ROW_GAP    = 8     -- 列间距
 local REQ_W      = 22    -- 技能等级 [300] 的宽度
 
--- 前向声明: 下面几处都要用 —— 面板改宽时 RelayoutRows 要拿 RowColumns/CellWidth
--- 重画金额 (数量>1 的材料显示成「单价×数量 = 合计」还是只显示合计, 取决于格宽)
+-- 前向声明: 下面几处都要用 —— 面板改宽时 RelayoutRows 要拿 RowColumns 重画金额
 local ApplyPriceToRow, CheckRowPrice, AnchorRowRight
 
 local function RowColumns(w)
-    local priceW = math.max(56, math.min(120, w * 0.17))
+    local priceW = math.max(56, math.min(110, w * 0.16))
     local rightFixed = BTN_W + 2 + 6 + priceW + 6 + REQ_W     -- 按钮 + 间距 + 价格 + 间距 + 技能
-    local rest = w - ROW_ICON_W - ROW_GAP - rightFixed
-    if rest < 150 then rest = 150 end
-    local titleW = math.max(72, rest * 0.36)
-    local matsW  = math.max(84, rest - titleW - ROW_GAP)
-    return titleW, matsW, priceW, ROW_ICON_W + titleW + ROW_GAP
-end
-
--- 单个材料格的实际宽度 (与 RelayoutCells 同一套算法, 供金额排版选择写法)
-local function CellWidth(r)
-    local w = (r and r:GetWidth()) or 0
-    if w <= 0 then w = BASE_W - PAD * 2 - 8 end
-    local _, matsW = RowColumns(w)
-    local n = (r and r.cellCount) or 1
-    if n < 1 then n = 1 end
-    local cw = matsW / n
-    if cw < 30 then cw = 30 end
-    return cw
+    local titleW = w - ROW_ICON_W - ROW_GAP - rightFixed
+    if titleW < 90 then titleW = 90 end
+    return titleW, priceW
 end
 
 -- 粗略文字宽度 (中文 ≈ 字号, 数字/字母 ≈ 字号 x 0.55)
@@ -504,13 +615,38 @@ local function ApproxWidth(s, size)
     return w
 end
 
--- 材料格的金额文字。
--- 数量 > 1 时真正花出去的是「单价 × 数量」, 只写单价会让人以为成本就是那么点,
--- 但材料格的宽度很紧 (4 样材料时只剩 ~30px, 刚够放一个 "3金60银"), 所以按格宽分档:
---   宽格   单价×3 = 合计
---   中格   ×3 合计
---   窄格   共合计
---   极窄   合计
+-- 商品行的「NPC 售价」标签: 紧跟在商品名文字后面。
+-- 商品名那一列宽度是固定的 (用来截断), 标签不能锚 title 的右缘 —— 面板一宽, 标签就飘到
+-- 半截空白里去了。所以按文字估算宽度算位置; 放不下先退成只写金额, 再放不下就不显示
+-- (完整信息在悬停提示里, 不会丢)。
+local function PlaceNpcTag(r)
+    local tag = r.npcTag
+    if not (tag and tag:IsShown()) then return end
+
+    local w = r:GetWidth() or (BASE_W - PAD * 2 - 8)
+    local titleW = RowColumns(w)
+    local left = ROW_ICON_W + math.min(ApproxWidth(PlainText(r.title:GetText()), F_TITLE) + 8, titleW)
+    local limit  = ROW_ICON_W + titleW
+
+    local txt = tag.fullText
+    if not txt or txt == "" then tag:Hide(); return end
+    if left + ApproxWidth(txt, F_MAT) > limit then
+        txt = tag.shortText
+        if not txt or txt == "" or left + ApproxWidth(txt, F_MAT) > limit then
+            tag:Hide()
+            return
+        end
+    end
+
+    tag:SetText(txt)
+    tag:ClearAllPoints()
+    tag:SetPoint("TOPLEFT", r, "TOPLEFT", left, -4)
+end
+
+-- 材料行的金额文字。
+-- 数量 > 1 时真正花出去的是「单价 × 数量」, 只写单价会让人以为成本就是那么点。
+-- 材料改成竖排后每行有整行的宽度, 一般直接写得出「单价×3 = 合计」; 面板被拖窄时
+-- 再按可用宽度降级成「×3 合计」/「共合计」/「合计」。
 local function MatPriceText(AH, unit, cnt, cw, size)
     local u = AH.Money(unit)
     if not cnt or cnt <= 1 then return u end
@@ -535,48 +671,85 @@ local function MatPriceText(AH, unit, cnt, cw, size)
     return t
 end
 
--- 材料格子: 横向等分材料区, 每格三段 —— 图标 / 材料名×数量 / 金额
+-- 从属虚线: 从商品图标下方拖一条竖虚线, 每行材料再伸出一小段横线连到它上面
 --
--- 图标为什么单独占一行而不是挤在名字左边: 材料 3~4 样时格子只剩 30 多像素,
--- 名字本身就要贴满, 塞不下 9px 的图标; 纵向还有富余, 横向没有。所有格子统一
--- 用同一套纵向位置, 这样相邻两行即使材料数不同, 名字和金额也在同一水平线上。
-local CELL_ICON = 8      -- 材料图标尺寸
-local CELL_ICON_Y  = -2  -- 图标顶边
-local CELL_NAME_Y  = -11 -- 材料名顶边
-local CELL_PRICE_Y = -21 -- 金额顶边
-
-local function RelayoutCells(r, matsX, matsW)
+-- 材料行不再挤在商品行右侧 (4 样材料时每样只有 30px, 名字和金额都要砍),
+-- 而是竖排在商品行下面, 每样材料独占一行、一行一样东西; 左侧空出整整一个商品图标的
+-- 宽度, 那一段用虚线表示「下面这几样都属于上面那个商品」。
+-- 虚线由一串 1x2 的小段拼出来 (每 5px 一段), 纹理池按需增长, 上限 DASH_MAX。
+local function LayoutTree(r)
     local n = r.cellCount or 0
+    local shown = 0
+    if n > 0 then
+        local d = PRODUCT_H - 6                                  -- 商品图标下沿再往下一点起笔
+        local last = PRODUCT_H + (n - 1) * MAT_LINE_H + MAT_LINE_H * 0.5  -- 最后一行材料的中线
+        while d <= last + 0.5 and shown < DASH_MAX do
+            shown = shown + 1
+            local t = r.dashes[shown]
+            if not t then
+                t = r:CreateTexture(nil, "ARTWORK")
+                t:SetColorTexture(1, 1, 1, 0.20)
+                t:SetSize(1, 2)
+                r.dashes[shown] = t
+            end
+            t:ClearAllPoints()
+            t:SetPoint("TOPLEFT", r, "TOPLEFT", TREE_X, -d)
+            t:Show()
+            d = d + 5
+        end
+    end
+    for i = shown + 1, #r.dashes do r.dashes[i]:Hide() end
+end
+
+-- 材料行排版: 一样材料一行, 整行宽度都能用 (名字在左, 金额靠右)
+local function RelayoutMats(r, w)
+    w = w or r:GetWidth() or (BASE_W - PAD * 2 - 8)
+    local n = r.cellCount or 0
+    local cw = w - MAT_INDENT - MAT_RIGHT      -- 右缘与「盈亏」列对齐, 不越到查价按钮下面
+    if cw < 90 then cw = 90 end
+    local nameW = cw - (MAT_PRICE_W + MAT_SELL_W + MAT_BUY_W + MAT_TAG_GAP + MAT_PRICE_GAP * 2)
+    if nameW < 56 then nameW = 56 end
+
     for k = 1, MAT_CELLS do
         local c = r.cells[k]
         if k <= n then
-            local cw = matsW / n
-            -- 4 样材料时 matsW 只有 ~113, 下限 30 刚好不越到右边的技能/盈亏列
-            if cw < 30 then cw = 30 end
-            c:SetSize(cw, ROW_H)
+            c:SetSize(cw, MAT_LINE_H)
             c:ClearAllPoints()
-            c:SetPoint("TOPLEFT", r, "TOPLEFT", matsX + (k - 1) * cw, 0)
-            c.name:SetWidth(cw)
-            c.price:SetWidth(cw)
+            c:SetPoint("TOPLEFT", r, "TOPLEFT", MAT_INDENT, -(PRODUCT_H + (k - 1) * MAT_LINE_H))
+            c.name:SetWidth(nameW)
+            c.price:SetWidth(MAT_PRICE_W)
+
+            -- 右侧从右往左排: 本配方金额 → NPC 买价 → NPC 卖价, 左边的余量全给材料名
+            c.buyTag:SetWidth(MAT_BUY_W)
+            c.buyTag:ClearAllPoints()
+            c.buyTag:SetPoint("RIGHT", c.price, "LEFT", -MAT_PRICE_GAP, 0)
+            c.sellTag:SetWidth(MAT_SELL_W)
+            c.sellTag:ClearAllPoints()
+            c.sellTag:SetPoint("RIGHT", c.buyTag, "LEFT", -MAT_TAG_GAP, 0)
+            c.buyHit:SetSize(MAT_BUY_W, MAT_LINE_H)
+            c.buyHit:ClearAllPoints()
+            c.buyHit:SetPoint("RIGHT", c.price, "LEFT", -MAT_PRICE_GAP, 0)
             c:Show()
         else
             c:Hide()
         end
     end
+    LayoutTree(r)
 end
 
 -- 行宽 / 文本宽度随面板宽度自适应
 local function RelayoutRows(w)
     if not (w and w > 0) then return end
-    local titleW, matsW, priceW, matsX = RowColumns(w)
+    local titleW, priceW = RowColumns(w)
     for i = 1, #rows do
         local r = rows[i]
         r:SetWidth(w)
         r.title:SetWidth(titleW)
         r.prodPrice:SetWidth(titleW)
         r.price:SetWidth(priceW)
-        RelayoutCells(r, matsX, matsW)
-        -- 格子宽度变了, 金额要不要写成「单价×数量 = 合计」也跟着变, 用已有结果重画一次
+        RelayoutMats(r, w)
+        PlaceNpcTag(r)
+        -- 金额要写成「单价×数量 = 合计」还是只写合计, 取决于可用宽度, 用已有结果重画一次
         if ApplyPriceToRow and r.payload then ApplyPriceToRow(r, r.payload) end
     end
 end
@@ -613,7 +786,7 @@ local function BuildList(f)
 
     scroll:SetScript("OnMouseWheel", function(self, delta)
         local maxScroll = math.max(0, (listContent:GetHeight() or 0) - (self:GetHeight() or 0))
-        local v = (self:GetVerticalScroll() or 0) - delta * (ROW_H * 2)
+        local v = (self:GetVerticalScroll() or 0) - delta * SCROLL_STEP
         if v < 0 then v = 0 elseif v > maxScroll then v = maxScroll end
         self:SetVerticalScroll(v)
         if UpdateThumb then UpdateThumb() end
@@ -727,14 +900,19 @@ end
 --------------------------------------------------------------------------- 行池与渲染
 
 -- 行尾三件套 (价格 / 查价按钮 / 技能) 的锚点切换:
--- 配方模式 = [价格][查价]; 材料汇总模式没有按钮, 价格直接靠右
+-- 配方模式 = [价格][查价]; 材料汇总模式没有按钮, 价格直接靠右。
+-- 这三样都只属于商品行, 所以锚在行的 TOPRIGHT 再往下压半个商品行高 —— 行高是可变的
+-- (商品行 + n 个材料行), 用 RIGHT + 0 的话按钮会飘到整块的中间去。
 AnchorRowRight = function(r, withBtn)
     if withBtn then r.btn:Show() else r.btn:Hide() end
+    r.btn:ClearAllPoints()
+    r.btn:SetPoint("TOPRIGHT", r, "TOPRIGHT", -2, -PRODUCT_H * 0.5)
+
     r.price:ClearAllPoints()
     if withBtn then
         r.price:SetPoint("RIGHT", r.btn, "LEFT", -6, 0)
     else
-        r.price:SetPoint("RIGHT", r, "RIGHT", -4, 0)
+        r.price:SetPoint("TOPRIGHT", r, "TOPRIGHT", -4, -PRODUCT_H * 0.5)
     end
     r.req:ClearAllPoints()
     r.req:SetPoint("RIGHT", r.price, "LEFT", -6, 0)
@@ -745,7 +923,8 @@ local function GetRow(i)
     if r then return r end
 
     r = CreateFrame("Frame", nil, listContent)
-    r:SetSize(BASE_W - PAD * 2 - 8, ROW_H)
+    r:SetSize(BASE_W - PAD * 2 - 8, PRODUCT_H)
+    r.blockH = PRODUCT_H
     r:EnableMouse(true)
 
     r.bg = r:CreateTexture(nil, "BACKGROUND")
@@ -759,36 +938,128 @@ local function GetRow(i)
     r.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
     r.icon:Hide()
 
-    -- 商品列: 第一行名称, 第二行产物售价 (查价后填)
+    -- 图标本身是纹理, 收不到鼠标事件, 盖一个透明小框专门接悬停 (看原生物品提示)
+    r.iconHit = CreateFrame("Frame", nil, r)
+    r.iconHit:SetSize(15, 15)
+    r.iconHit:SetPoint("TOPLEFT", 0, -3)
+    r.iconHit:EnableMouse(true)
+    r.iconHit:SetScript("OnEnter", function(s)
+        r.bg:SetColorTexture(1, 1, 1, 0.05)     -- 子控件接管鼠标, 补回整行高亮
+        -- 图标还没解析出物品 (数据未回包) 时退回整行详情, 别让这里变成无提示的死区
+        if r.itemID then
+            ns.UI.ShowItemTip(s, r.itemID, PlainText(r.title and r.title:GetText()))
+        else
+            ns.UI.ShowRowTooltip(s, r)
+        end
+    end)
+    r.iconHit:SetScript("OnLeave", function(s)
+        r.bg:SetColorTexture(1, 1, 1, r.odd and 0.025 or 0)
+        TipEnd(s)
+    end)
+
+    -- 商品行: 第一行名称, 第二行产物售价 (查价后填)
     r.title = T.Text(r, F_TITLE, C.text)
-    r.title:SetPoint("TOPLEFT", ROW_ICON_W, -3)
+    r.title:SetPoint("TOPLEFT", ROW_ICON_W, -2)
     r.title:SetWidth(140)
     r.title:SetWordWrap(false)
 
     r.prodPrice = T.Text(r, F_PROD, C.muted)
-    r.prodPrice:SetPoint("TOPLEFT", r.title, "BOTTOMLEFT", 0, -1)
+    r.prodPrice:SetPoint("TOPLEFT", r.title, "BOTTOMLEFT", 0, 0)
     r.prodPrice:SetWidth(140)
     r.prodPrice:SetWordWrap(false)
 
-    -- 材料列: 每样材料一格, 图标 / 名字×数量 / 金额 (纵向位置三行固定, 见上方 CELL_*_Y)
+    -- NPC 售价 (客户端物品库自带, 离线就有)。位置不能锚 title 的右缘 —— 商品名那列
+    -- 宽度固定, 面板一宽标签就飘到空白里, 所以交给 PlaceNpcTag 按文字宽度算。
+    r.npcTag = T.Text(r, F_MAT, C.muted)
+    r.npcTag:SetWordWrap(false)
+    r.npcTag:SetJustifyH("LEFT")
+    r.npcTag:Hide()
+
+    -- 材料行: 一样材料一行, 竖排在商品行下面 (位置/宽度由 RelayoutMats 算)
     r.cells = {}
     r.cellCount = 0
+    r.dashes = {}          -- 从属竖虚线的小段纹理池 (见 LayoutTree)
     for k = 1, MAT_CELLS do
         local c = CreateFrame("Frame", nil, r)
-        c:SetSize(48, ROW_H)
+        c:SetSize(200, MAT_LINE_H)
+        -- 每行独立接鼠标: 鼠标停在哪样材料上就只讲那样材料, 不再整行一条大提示
+        c:EnableMouse(true)
+
+        -- 整行可悬停, 悬停时给一点底色, 明确指出「现在讲的是这一样」
+        c.hl = c:CreateTexture(nil, "BACKGROUND")
+        c.hl:SetAllPoints(true)
+        c.hl:SetColorTexture(1, 1, 1, 0)
+        c.hl:Hide()
+
+        -- 从竖虚线伸过来的一小段横线 (画在行左侧的空白里, 所以是负偏移)
+        c.branch = c:CreateTexture(nil, "ARTWORK")
+        c.branch:SetColorTexture(1, 1, 1, 0.16)
+        c.branch:SetSize(MAT_INDENT - TREE_X - 4, 1)
+        c.branch:SetPoint("LEFT", c, "LEFT", TREE_X + 1 - MAT_INDENT, 0)
 
         c.icon = c:CreateTexture(nil, "ARTWORK")
-        c.icon:SetSize(CELL_ICON, CELL_ICON)
-        c.icon:SetPoint("TOPLEFT", 0, CELL_ICON_Y)
+        c.icon:SetSize(MAT_ICON, MAT_ICON)
+        c.icon:SetPoint("LEFT", 0, 0)
         c.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
         c.icon:Hide()
 
         c.name = T.Text(c, F_MAT, C.muted)
-        c.name:SetPoint("TOPLEFT", 0, CELL_NAME_Y)
+        c.name:SetPoint("LEFT", c.icon, "RIGHT", 4, 0)
         c.name:SetWordWrap(false)
         c.price = T.Text(c, F_MAT, C.faint)
-        c.price:SetPoint("TOPLEFT", 0, CELL_PRICE_Y)
+        c.price:SetPoint("RIGHT", c, "RIGHT", 0, 0)
         c.price:SetWordWrap(false)
+        c.price:SetJustifyH("RIGHT")
+
+        -- NPC 卖价 (客户端自带, 只读)
+        c.sellTag = T.Text(c, F_MAT, C.muted)
+        c.sellTag:SetWordWrap(false)
+        c.sellTag:SetJustifyH("RIGHT")
+        c.sellTag:Hide()
+
+        -- NPC 买价 (手动录入, 点一下开编辑框)。空着的时候显示「＋买价」当入口
+        c.buyTag = T.Text(c, F_MAT, C.faint)
+        c.buyTag:SetWordWrap(false)
+        c.buyTag:SetJustifyH("RIGHT")
+        c.buyTag:SetText("＋买价")
+
+        -- 文字本身收不到鼠标事件, 盖一个透明小框专门接点击/悬停
+        c.buyHit = CreateFrame("Frame", nil, c)
+        c.buyHit:EnableMouse(true)
+        c.buyHit:SetScript("OnEnter", function(s)
+            c.hoverOn(s)
+            c.buyTag:SetTextColor(T.rgb(C.goldHi))
+        end)
+        c.buyHit:SetScript("OnLeave", function(s)
+            c.buyTag:SetTextColor(T.rgb(ns.NPC and ns.NPC.Buy(c.itemID) and C.teal or C.faint))
+            c.hoverOff(s)
+        end)
+        c.buyHit:SetScript("OnMouseUp", function()
+            ns.UI.EditNpcPrice(c.itemID, PlainText(c.name:GetText()), c)
+        end)
+
+        -- 悬停/离开的公共处理: 直接把锚点控件传进来, 提示归属按控件区分
+        -- (买价小框和材料行是两个控件, 用同一个归属会让提示闪一下就没了)
+        c.hoverOn = function(s)
+            -- 材料行接管鼠标后行本身的 OnEnter 不会触发, 这里补上整块高亮,
+            -- 否则鼠标一进材料区, 行的底色就"熄灭"了
+            r.bg:SetColorTexture(1, 1, 1, 0.05)
+            if not c.itemID then
+                c.hl:Hide()
+                ns.UI.ShowRowTooltip(s, r)      -- 空行不抢提示
+                return
+            end
+            c.hl:SetColorTexture(1, 1, 1, 0.06)
+            c.hl:Show()
+            ns.UI.ShowMatTooltip(s, r, k)
+        end
+        c.hoverOff = function(s)
+            c.hl:Hide()
+            r.bg:SetColorTexture(1, 1, 1, r.odd and 0.025 or 0)
+            TipEnd(s)
+        end
+        c:SetScript("OnEnter", function(s) c.hoverOn(s) end)
+        c:SetScript("OnLeave", function(s) c.hoverOff(s) end)
         c:Hide()
         r.cells[k] = c
     end
@@ -815,21 +1086,20 @@ local function GetRow(i)
     r.btn:SetScript("OnLeave", function(s)
         s.bg:SetVertexColor(1, 1, 1, 0.10)
         s.text:SetTextColor(T.rgb(C.muted))
-        GameTooltip:Hide()
+        TipEnd(s)
     end)
 
     AnchorRowRight(r, true)
 
-    -- 行悬停: 高亮 + 完整标题提示
-    -- 整块 UI 收小一档后, 商品名和材料名都更容易被截断 (尤其 4 样材料的行),
-    -- 所以悬停时把整行文字原样吐到 tooltip 里, 顺带列出全部材料。
+    -- 行悬停: 只负责商品详情 (名称/技能/产出/材料/成本盈亏)。
+    -- 材料行与图标各有自己的 OnEnter, 鼠标移到它们上面时由它们接管提示。
     r:SetScript("OnEnter", function(s)
         s.bg:SetColorTexture(1, 1, 1, 0.05)
         ns.UI.ShowRowTooltip(s, r)
     end)
     r:SetScript("OnLeave", function(s)
         s.bg:SetColorTexture(1, 1, 1, s.odd and 0.025 or 0)
-        GameTooltip:Hide()
+        TipEnd(s)
     end)
 
     rows[i] = r
@@ -848,7 +1118,7 @@ local function SetRowIcon(r, itemID)
     end
 end
 
--- 材料格图标: 同样允许「物品数据还没回包」时先空着, 回包后由 RefreshRowIcons 补
+-- 材料行图标: 同样允许「物品数据还没回包」时先空着, 回包后由 RefreshRowIcons 补
 local function SetCellIcon(c, itemID)
     c.itemID = itemID
     local tex = (ns.Prof and ns.Prof.ItemIcon and ns.Prof.ItemIcon(itemID)) or nil
@@ -857,6 +1127,48 @@ local function SetCellIcon(c, itemID)
         c.icon:Show()
     else
         c.icon:Hide()
+    end
+end
+
+-- NPC 售价标签 (商品行)。卖价来自客户端物品库, 拿不到就整条隐藏, 留位置给商品名。
+local function SetRowNpc(r, itemID)
+    local NPC = ns.NPC
+    local sell = NPC and NPC.Sell(itemID)
+    if sell then
+        r.npcTag.fullText  = "NPC " .. NPC.Money(sell)
+        r.npcTag.shortText = NPC.Money(sell)          -- 长商品名放不下时只留金额
+        r.npcTag:Show()
+    else
+        r.npcTag.fullText  = nil
+        r.npcTag.shortText = nil
+        r.npcTag:Hide()
+    end
+    PlaceNpcTag(r)
+end
+
+-- 材料行的两列 NPC 价格:
+--   卖 = 客户端自带 (只读), 拿不到就不显示
+--   买 = 玩家自己录入的 (db.npcBuy), 没录入时留「＋买价」当入口
+local function SetCellNpc(c, itemID)
+    local NPC = ns.NPC
+    if not NPC then return end
+
+    local sell = NPC.Sell(itemID)
+    if sell then
+        c.sellTag:SetText("卖 " .. NPC.Money(sell))
+        c.sellTag:Show()
+    else
+        c.sellTag:SetText("")
+        c.sellTag:Hide()
+    end
+
+    local buy = NPC.Buy(itemID)
+    if buy then
+        c.buyTag:SetText("买 " .. NPC.Money(buy))
+        c.buyTag:SetTextColor(T.rgb(C.teal))
+    else
+        c.buyTag:SetText("＋买价")
+        c.buyTag:SetTextColor(T.rgb(C.faint))
     end
 end
 
@@ -878,6 +1190,40 @@ local function RefreshRowIcons()
     end
 end
 
+-- NPC 售价也是要等物品数据回包的, 和图标一起补 (只补还没拿到的那几行)
+local function RefreshRowNpc()
+    for i = 1, #rows do
+        local r = rows[i]
+        if r:IsShown() then
+            if r.itemID and not (r.npcTag.fullText) then
+                SetRowNpc(r, r.itemID)
+            end
+            for k = 1, (r.cellCount or 0) do
+                local c = r.cells[k]
+                if c.itemID and not c.sellTag:IsShown() then
+                    SetCellNpc(c, c.itemID)
+                end
+            end
+        end
+    end
+end
+
+-- 只重画某个物品的 NPC 价格格子 (改完买价用)。
+-- 不能直接 RenderList: 那会把列表滚回顶部, 玩家刚记的那一行就跑没影了。
+local function RefreshNpcFor(itemID)
+    if type(itemID) ~= "number" then return end
+    for i = 1, #rows do
+        local r = rows[i]
+        if r:IsShown() then
+            if r.itemID == itemID then SetRowNpc(r, itemID) end
+            for k = 1, (r.cellCount or 0) do
+                local c = r.cells[k]
+                if c.itemID == itemID then SetCellNpc(c, itemID) end
+            end
+        end
+    end
+end
+
 RenderList = function()
     if not listContent or not scroll then return end
     if not (ns.Prof and ns.Prof.byKey and ns.Prof.byKey[curKey]) then return end
@@ -894,16 +1240,16 @@ RenderList = function()
     local w = scroll:GetWidth() or (contentW - PAD * 2 - 8)
     if w < 100 then w = contentW - PAD * 2 - 8 end
     listContent:SetWidth(w)
-    listContent:SetHeight(math.max(1, #items * ROW_H + 4))
 
+    -- 块高随材料数变化 (商品行 + n 个材料行), 所以位置得一条条累加, 不能再用 i * 行高
+    local y = 0
     for i = 1, math.max(#rows, #items) do
         local r = rows[i]
         if i <= #items then
             if not r then r = GetRow(i) end
-            r:SetPoint("TOPLEFT", 0, -((i - 1) * ROW_H))
             r:Show()
             r:SetWidth(w)
-            local titleW, matsW, priceW, matsX = RowColumns(w)
+            local titleW, priceW = RowColumns(w)
             r.title:SetWidth(titleW)
             r.prodPrice:SetWidth(titleW)
             r.price:SetWidth(priceW)
@@ -915,10 +1261,12 @@ RenderList = function()
                 local m = items[i]
                 r.rec = nil
                 r.cellCount = 0
+                r.blockH = PRODUCT_H
                 AnchorRowRight(r, false)
                 r.title:SetText(m.name or "?")
                 r.req:SetText(format("|cffe8c25a×%d|r", m.count or 0))
                 SetRowIcon(r, m.id)
+                SetRowNpc(r, m.id)
 
                 -- 材料汇总: 单价写在材料名下方, 右侧是该材料的合计花费
                 local e = ns.Auction and ns.Auction.Price(m.id)
@@ -944,16 +1292,19 @@ RenderList = function()
                 r.title:SetText((rec.name or "?") .. made)
                 r.req:SetText(format("|cff8a929e[%d]|r", rec.req or 0))
                 SetRowIcon(r, rec.item)
+                SetRowNpc(r, rec.item)
 
-                -- 材料格: 图标 + 「名字×数量」 + 单价 (单价查价后再写)
+                -- 材料行: 一样一行, 名字在前, 金额靠右 (金额查价后再写)
                 local mats = rec.mats or {}
                 r.cellCount = math.min(#mats, MAT_CELLS)
+                r.blockH = PRODUCT_H + r.cellCount * MAT_LINE_H
                 for k = 1, r.cellCount do
                     local m = mats[k]
                     local c = r.cells[k]
                     SetCellIcon(c, m.id)
-                    c.name:SetText(format("%s|cff8a929e×%d|r",
-                        m.name or ("#" .. tostring(m.id)), m.count or 1))
+                    SetCellNpc(c, m.id)
+                    c.hl:Hide()     -- 行被复用: 上一个配方留下的悬停高亮要清掉
+                    c.name:SetText(m.name or ("#" .. tostring(m.id)))
                     c.price:SetText("")
                 end
 
@@ -961,11 +1312,18 @@ RenderList = function()
                 ApplyPriceToRow(r, ns.Auction and ns.Auction.Preview(rec))
             end
 
-            RelayoutCells(r, matsX, matsW)
+            r:SetHeight(r.blockH)
+            r:ClearAllPoints()
+            r:SetPoint("TOPLEFT", 0, -y)
+            y = y + r.blockH
+
+            RelayoutMats(r, w)
         elseif r then
             r:Hide()
         end
     end
+
+    listContent:SetHeight(math.max(1, y + 4))
 
     scroll:SetVerticalScroll(0)
     if UpdateThumb then UpdateThumb() end
@@ -974,9 +1332,9 @@ end
 --------------------------------------------------------------------------- 查价
 
 -- 把查价结果画到行上:
---   商品列第二行 = 产物售价 (一次做多份时是整个产出), 每个材料格第三行 = 该材料花费,
---   右侧 = 盈亏。数量 > 1 的材料写「单价×数量 = 合计」, 格子窄了自动退化成只写合计
---   (见 MatPriceText), 完整明细在悬停「查价」按钮的提示里。
+--   商品行第二行 = 产物售价 (一次做多份时是整个产出), 每个材料行右侧 = 该材料花费,
+--   商品行右侧 = 盈亏。数量 > 1 的材料写「单价×数量 = 合计」, 面板被拖窄时自动退化成
+--   只写合计 (见 MatPriceText), 完整明细在悬停「查价」按钮的提示里。
 ApplyPriceToRow = function(r, out)
     r.payload = out
     local AH = ns.Auction
@@ -1016,16 +1374,15 @@ ApplyPriceToRow = function(r, out)
         r.prodPrice:SetText("")
     end
 
-    -- 每样材料的金额 (材料名下方)。数量 > 1 写成「单价×数量 = 合计」或退化成合计,
-    -- 具体写哪一种由格宽决定 (见 MatPriceText)
-    local cw = CellWidth(r)
+    -- 每样材料的金额 (各自那一行的右侧)。数量 > 1 写成「单价×数量 = 合计」,
+    -- 一行放不下时退化成合计 (见 MatPriceText)
     for k = 1, (r.cellCount or 0) do
         local m = rec and rec.mats and rec.mats[k]
         local c = r.cells[k]
         local e = m and out.unit and out.unit[m.id]
         if e and e.unit then
             c.price:SetTextColor(T.rgb(C.gold))
-            c.price:SetText(MatPriceText(AH, e.unit, m.count or 1, cw, F_MAT))
+            c.price:SetText(MatPriceText(AH, e.unit, m.count or 1, MAT_PRICE_W, F_MAT))
         elseif e then
             c.price:SetTextColor(T.rgb(C.red))
             c.price:SetText(e.reason or "无挂单")
@@ -1085,21 +1442,7 @@ CheckRowPrice = function(r)
     end, function(done, total)
         if r.rec ~= rec then return end
         r.price:SetText(format("%d/%d", done, total))
-    end)
-end
-
--- tooltip 贴鼠标
---
--- 原来用 ANCHOR_RIGHT 锚在控件右边: 面板本身贴在屏幕右缘、宽度又占半屏, 鼠标停在行中间时
--- 提示会盖住材料列, 或者干脆被挤到屏幕外。改成跟随鼠标后, 提示永远出现在光标旁边。
--- ANCHOR_CURSOR_RIGHT 让提示落在光标右下方一点, 不压住光标; 万一客户端不认这个锚点
--- (老版本只有 ANCHOR_CURSOR), 用 pcall 退回到最通用的 ANCHOR_CURSOR。
-local function TooltipAtCursor(anchor)
-    anchor = anchor or ns.frame or UIParent
-    local ok = pcall(GameTooltip.SetOwner, GameTooltip, anchor, "ANCHOR_CURSOR_RIGHT")
-    if not ok then
-        pcall(GameTooltip.SetOwner, GameTooltip, anchor, "ANCHOR_CURSOR")
-    end
+    end, true)   -- force: 点一次按钮就真的去拍卖行查一次, 不用缓存顶替
 end
 
 -- 悬浮明细: 产物/材料单价 · 成本 · 税后收入 · 利润
@@ -1107,7 +1450,7 @@ function ns.UI.ShowPriceTooltip(anchor, r)
     local AH = ns.Auction
     local out = r.payload
 
-    TooltipAtCursor(anchor)
+    TipBegin(anchor)
     GameTooltip:AddLine("拍卖行查价", 1, 0.89, 0.55)
 
     if out and out.unit and out.rec == r.rec then
@@ -1131,7 +1474,7 @@ function ns.UI.ShowPriceTooltip(anchor, r)
             local cnt = m.count or 1
             local txt, r2, g2, b2
             if e and e.unit then
-                -- 数量 > 1 时把「单价 = 合计」都写出来, 行内格子放不下的信息在这里补齐
+                -- 数量 > 1 时把「单价 = 合计」都写出来, 行内被截断的信息在这里补齐
                 txt = cnt > 1
                     and format("%s/个 = %s", AH.Money(e.unit), AH.Money(e.unit * cnt))
                     or  (AH.Money(e.unit) .. "/个")
@@ -1152,6 +1495,13 @@ function ns.UI.ShowPriceTooltip(anchor, r)
             0.72, 0.75, 0.80, 0.92, 0.93, 0.95)
         GameTooltip:AddDoubleLine("收入 (扣 5% 税)", AH.Money(out.net or 0),
             0.72, 0.75, 0.80, 0.92, 0.93, 0.95)
+
+        -- NPC 保底: 这一单全卖给商人的收入。AH 扣完税还不如它时, 这才是真实下限
+        local npcProd = ns.NPC and ns.NPC.Sell(rec.item)
+        if npcProd then
+            GameTooltip:AddDoubleLine("卖商人 (保底)", AH.Money(npcProd * made),
+                0.72, 0.75, 0.80, 0.82, 0.84, 0.88)
+        end
 
         if out.profit then
             local txt = (out.profit >= 0 and "+" or "-") .. AH.Money(math.abs(out.profit))
@@ -1191,55 +1541,340 @@ function ns.UI.ShowPriceTooltip(anchor, r)
     GameTooltip:Show()
 end
 
--- 颜色码剥离: 行内文字带 |cff... 前缀和 ×N 的灰色段, 塞进 tooltip 前要还原成纯文字
-local function PlainText(s)
-    if type(s) ~= "string" then return "" end
-    s = s:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
-    return s
-end
-
--- 行悬停提示: 补全被截断的标题, 并列出全部材料
--- 整块 UI 收小一档后 (行高 40→32, 商品名 11→10pt), 长名字更容易被截成省略号,
--- 这里把完整名字和材料清单原样给出来; 价格明细仍归「查价」按钮的提示。
+-- 商品详情 (鼠标停在商品名 / 行的非材料区)
+-- 里面堆的是这一条配方的完整信息: 专业与技能要求、产出、材料清单 (带已查到的单价),
+-- 已经查过价时再补成本 / 税后收入 / 盈亏。材料单独一条提示, 见 ShowMatTooltip。
 function ns.UI.ShowRowTooltip(anchor, r)
     if not r then return end
 
-    TooltipAtCursor(anchor)
-
-    local title = PlainText(r.title and r.title:GetText()) or ""
-    if title == "" then return end
-    GameTooltip:AddLine(title, 1, 1, 1, true)
-
+    local AH = ns.Auction
     local rec = r.rec
-    if rec then
-        local req = rec.req and format(" · 技能 %d", rec.req) or ""
-        local made = (rec.made and rec.made > 1)
-            and format(" · 一次做 %d 个", rec.made) or ""
-        GameTooltip:AddLine("材料配方" .. req .. made, 0.72, 0.75, 0.80)
+    TipBegin(anchor)
 
-        local mats = rec.mats or {}
-        if #mats > 0 then
-            GameTooltip:AddLine(" ")
-            for i = 1, #mats do
-                local m = mats[i]
-                local name = (m.name and PlainText(m.name)) or "?"
-                GameTooltip:AddDoubleLine(
-                    name, format("×%d", m.count or 1),
-                    0.85, 0.86, 0.90, 0.72, 0.75, 0.80)
+    -- 材料汇总模式: 这一行本身就是一样材料, 交给材料详情
+    if not rec then
+        local name = PlainText(r.title and r.title:GetText()) or "?"
+        NativeItemTip(r.itemID, name)
+        GameTooltip:AddLine(" ")
+        local e = AH and AH.Price and AH.Price(r.itemID)
+        if e and e.unit then
+            GameTooltip:AddLine("当前最低单价 " .. AH.Money(e.unit) .. "/个", 1, 0.82, 0.35)
+        else
+            GameTooltip:AddLine("还没有价格, 点右边「查价」", 0.62, 0.65, 0.70)
+        end
+        if ns.NPC then
+            local npcSell = ns.NPC.Sell(r.itemID)
+            local npcBuy  = ns.NPC.Buy(r.itemID)
+            if npcSell then
+                GameTooltip:AddLine("卖商人 " .. ns.NPC.Money(npcSell) .. "/个", 0.82, 0.84, 0.88)
+            end
+            if npcBuy then
+                GameTooltip:AddLine("从商人买 " .. ns.NPC.Money(npcBuy) .. "/个", 0.29, 0.78, 0.66)
             end
         end
-        GameTooltip:AddLine(" ")
-        GameTooltip:AddLine("点右边的「查价」看拍卖行价格与盈亏", 0.55, 0.58, 0.63)
+        GameTooltip:Show()
+        return
+    end
+
+    local title = PlainText(r.title and r.title:GetText()) or ""
+    if title == "" then title = rec.name or "?" end
+
+    local made = rec.made or 1
+    local profName = (ns.Prof and ns.Prof.byKey and ns.Prof.byKey[curKey]
+        and ns.Prof.byKey[curKey].name) or curKey
+
+    GameTooltip:AddLine(title, 1, 1, 1, true)
+    GameTooltip:AddLine(format("%s · 技能 %s%s", tostring(profName),
+        tostring(rec.req or "?"),
+        made > 1 and format(" · 一次做 %d 个", made) or ""),
+        0.72, 0.75, 0.80)
+
+    local out = r.payload
+    local fresh = out and out.rec == rec
+    local unitOf = fresh and out.unit or nil
+
+    -- 产出与售价
+    local prod = unitOf and unitOf[rec.item]
+    local prodTxt
+    if prod and prod.unit then
+        prodTxt = made > 1
+            and format("%s/个 = %s", AH.Money(prod.unit), AH.Money(prod.unit * made))
+            or  (AH.Money(prod.unit) .. "/个")
+    elseif prod then
+        prodTxt = prod.reason or "无挂单"
     else
-        -- 材料汇总模式: 这一行本身就是一样材料
-        local e = ns.Auction and ns.Auction.Price and ns.Auction.Price(r.itemID)
-        if e and e.unit then
-            GameTooltip:AddLine("当前最低单价 " .. ns.Auction.Money(e.unit) .. "/个",
-                1, 0.82, 0.35)
+        prodTxt = "未查价"
+    end
+    GameTooltip:AddDoubleLine(format("产出  ×%d", made), prodTxt,
+        0.85, 0.86, 0.90, (prod and prod.unit) and 1 or 0.62,
+        (prod and prod.unit) and 0.82 or 0.65, (prod and prod.unit) and 0.35 or 0.70)
+
+    -- NPC 售价: 客户端物品库自带, 和拍卖行完全无关 —— AH 没挂单时也能看到保底值多少
+    local npcProd = ns.NPC and ns.NPC.Sell(rec.item)
+    if npcProd then
+        GameTooltip:AddDoubleLine("卖商人",
+            made > 1 and format("%s/个 = %s", AH.Money(npcProd), AH.Money(npcProd * made))
+                      or  (AH.Money(npcProd) .. "/个"),
+            0.72, 0.75, 0.80, 0.82, 0.84, 0.88)
+    end
+
+    -- 材料清单
+    local mats = rec.mats or {}
+    if #mats > 0 then
+        GameTooltip:AddLine(" ")
+        for i = 1, #mats do
+            local m = mats[i]
+            local name = (m.name and PlainText(m.name)) or ("物品 #" .. tostring(m.id))
+            local cnt = m.count or 1
+            local e = unitOf and unitOf[m.id]
+            local txt, cr, cg, cb = format("×%d", cnt), 0.72, 0.75, 0.80
+            if e and e.unit then
+                txt = cnt > 1
+                    and format("×%d   %s", cnt, AH.Money(e.unit * cnt))
+                    or  format("×%d   %s", cnt, AH.Money(e.unit))
+                cr, cg, cb = 1, 0.82, 0.35
+            elseif e then
+                txt, cr, cg, cb = format("×%d   %s", cnt, e.reason or "无挂单"), 0.86, 0.42, 0.42
+            end
+            GameTooltip:AddDoubleLine(name, txt, 0.85, 0.86, 0.90, cr, cg, cb)
+        end
+    end
+
+    -- 已查价: 成本 / 税后收入 / 盈亏
+    if fresh and out then
+        GameTooltip:AddLine(" ")
+        GameTooltip:AddDoubleLine("材料成本", AH.Money(out.cost or 0), 0.72, 0.75, 0.80, 0.92, 0.75, 0.55)
+        if out.revenue then
+            GameTooltip:AddDoubleLine("税后收入", AH.Money(out.net or 0),
+                0.72, 0.75, 0.80, 0.92, 0.80, 0.50)
+        end
+        if out.profit then
+            local gain = out.profit >= 0
+            GameTooltip:AddDoubleLine("盈亏",
+                format("%s%s", gain and "+" or "-", AH.Money(math.abs(out.profit))),
+                0.72, 0.75, 0.80,
+                gain and 0.40 or 0.92, gain and 0.86 or 0.38, gain and 0.46 or 0.42)
+        else
+            GameTooltip:AddLine("缺价格: " .. table.concat(out.missing or {}, ", "),
+                0.86, 0.42, 0.42)
+        end
+        -- 缓存只存在物品维度上 (db.prices), 计算结果的 unit 表里没有时间戳
+        local cached = AH and AH.Price and AH.Price(rec.item)
+        local line
+        if cached and cached.ts then
+            local ago = math.max(0, math.floor(GetTime() - cached.ts))
+            -- 重新查完就是 0 分钟前, 写「0 分钟前」很怪, 单独给一句
+            line = (ago < 60) and "价格是刚刚查到的"
+                or format("价格取自拍卖行, %d 分钟前", math.floor(ago / 60))
+        else
+            line = "价格取自拍卖行缓存"
+        end
+        GameTooltip:AddLine(line .. " · 点「查价」重新查最新行情", 0.55, 0.58, 0.63)
+    else
+        GameTooltip:AddLine(" ")
+        GameTooltip:AddLine("点右边「查价」取拍卖行最低单价并算盈亏", 0.62, 0.65, 0.70, true)
+    end
+
+    GameTooltip:Show()
+end
+
+-- 材料详情 (鼠标停在某个材料行上)
+-- 每格独立一条: 原生物品提示 (品质色 / 物品等级 / 描述) + 本配方要几个 + 单价与合计。
+function ns.UI.ShowMatTooltip(anchor, r, idx)
+    if not (r and idx) then return end
+    local rec = r.rec
+    local m = rec and rec.mats and rec.mats[idx]
+    if not m then
+        -- 材料汇总模式没有 rec.mats, 退回到行详情
+        return ns.UI.ShowRowTooltip(anchor, r)
+    end
+
+    local AH = ns.Auction
+    local cnt = m.count or 1
+    TipBegin(anchor)
+    NativeItemTip(m.id, (m.name and PlainText(m.name)) or ("物品 #" .. tostring(m.id)))
+
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddLine(format("本配方需要 ×%d", cnt), 0.85, 0.86, 0.90)
+
+    local out = r.payload
+    local e = (out and out.rec == rec and out.unit) and out.unit[m.id] or nil
+    if e and e.unit then
+        GameTooltip:AddLine(format("拍卖行最低单价 %s/个", AH.Money(e.unit)), 1, 0.82, 0.35)
+        GameTooltip:AddLine(format("%d 个合计 %s", cnt, AH.Money(e.unit * cnt)), 1, 0.82, 0.35)
+    elseif e then
+        GameTooltip:AddLine(e.reason or "拍卖行无挂单", 0.86, 0.42, 0.42)
+    else
+        GameTooltip:AddLine("还没有价格, 点右边「查价」", 0.62, 0.65, 0.70)
+    end
+
+    -- NPC 两个价: 卖价是客户端自带的, 买价是玩家自己记的 (点「买价」格子录入)
+    local NPC = ns.NPC
+    if NPC then
+        local npcSell = NPC.Sell(m.id)
+        if npcSell then
+            GameTooltip:AddLine(format("卖商人 %s/个 · %d 个共 %s",
+                NPC.Money(npcSell), cnt, NPC.Money(npcSell * cnt)), 0.82, 0.84, 0.88)
+        end
+        local npcBuy = NPC.Buy(m.id)
+        if npcBuy then
+            GameTooltip:AddLine(format("从商人买 %s/个 (自己记的价)", NPC.Money(npcBuy)),
+                0.29, 0.78, 0.66)
+        else
+            GameTooltip:AddLine("从商人买: 点「买价」格子自己记一个", 0.42, 0.46, 0.52)
         end
     end
 
     GameTooltip:Show()
+end
+
+-- 图标详情 (鼠标停在行首图标上): 原生物品提示 + 该物品的当前售价
+function ns.UI.ShowItemTip(anchor, itemID, label)
+    TipBegin(anchor)
+    NativeItemTip(itemID, label)
+
+    local AH = ns.Auction
+    local e = AH and AH.Price and AH.Price(itemID)
+    GameTooltip:AddLine(" ")
+    if e and e.unit then
+        GameTooltip:AddLine("当前最低单价 " .. AH.Money(e.unit) .. "/个", 1, 0.82, 0.35)
+    else
+        GameTooltip:AddLine("还没有价格", 0.62, 0.65, 0.70)
+    end
+
+    if ns.NPC then
+        local npcSell = ns.NPC.Sell(itemID)
+        local npcBuy  = ns.NPC.Buy(itemID)
+        if npcSell then
+            GameTooltip:AddLine("卖商人 " .. ns.NPC.Money(npcSell) .. "/个", 0.82, 0.84, 0.88)
+        end
+        if npcBuy then
+            GameTooltip:AddLine("从商人买 " .. ns.NPC.Money(npcBuy) .. "/个", 0.29, 0.78, 0.66)
+        end
+    end
+    GameTooltip:Show()
+end
+
+--------------------------------------------------------------------------- NPC 买价录入
+
+-- 「从商人买」的价格客户端查不到 (只有商人窗口开着时才能用 C_MerchantFrame 逐项读),
+-- 所以改成玩家自己记一个单价: 存在 db.npcBuy[itemID], 每次渲染都读回来, 重登也在。
+local editor
+
+local function BuildNpcEditor()
+    if editor then return editor end
+    if not frame then return nil end
+
+    -- 挂在主面板下: 跟着面板一起缩放/移动, 层级自然压在面板所有行上面
+    -- (父控件是缩放过的, 若挂 UIParent 会和面板对不齐)
+    local f = T.Glass(frame, 300, 126)
+    f:SetFrameStrata(ns.DB().strata or "DIALOG")
+    f:SetFrameLevel((frame:GetFrameLevel() or 200) + 20)
+    f:SetClampedToScreen(true)
+    f:EnableMouse(true)
+    f:SetMovable(true)
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", function(s) s:StartMoving() end)
+    f:SetScript("OnDragStop", function(s) s:StopMovingOrSizing() end)
+
+    local title = T.Text(f, 11, C.gold)
+    title:SetPoint("TOPLEFT", 14, -12)
+    title:SetText("NPC 购买价")
+
+    local who = T.Text(f, 9, C.muted)
+    who:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -5)
+    who:SetWidth(272)
+    who:SetWordWrap(false)
+
+    -- 输入框底色自己画: 用 InputBoxTemplate 会被 EllesmereUI 的皮肤改成另一个样子
+    local boxBG = T.Line(f, 272, 22, C.white, 0.06)
+    boxBG:SetPoint("TOPLEFT", who, "BOTTOMLEFT", 0, -8)
+
+    local box = CreateFrame("EditBox", nil, f)
+    box:SetSize(264, 18)
+    box:SetPoint("LEFT", boxBG, "LEFT", 5, 0)
+    box:SetFont(T.FontFile(), 11, "")
+    box:SetTextColor(T.rgb(C.text))
+    box:SetAutoFocus(false)
+    box:SetMaxLetters(24)
+    box:SetTextInsets(1, 1, 0, 0)
+
+    local hint = T.Text(f, 8, C.faint)
+    hint:SetPoint("TOPLEFT", boxBG, "BOTTOMLEFT", 0, -5)
+    hint:SetWidth(272)
+    hint:SetWordWrap(false)
+
+    local function Save()
+        local id = f.itemID
+        if not id then f:Hide(); return end
+        local text = box:GetText() or ""
+        if text:gsub("%s", "") == "" then
+            ns.NPC.SetBuy(id, 0)                    -- 清空 = 删掉这条
+            f:Hide()
+            RefreshNpcFor(id)
+            return
+        end
+        local copper, err = ns.NPC.ParseMoney(text)
+        if not copper then
+            hint:SetTextColor(T.rgb(C.red))
+            hint:SetText("看不懂: " .. tostring(err))
+            return
+        end
+        ns.NPC.SetBuy(id, copper)
+        f:Hide()
+        RefreshNpcFor(id)
+    end
+
+    box:SetScript("OnEnterPressed", Save)
+    box:SetScript("OnEscapePressed", function() f:Hide() end)
+
+    local save = MakeMiniButton(f, 54, 18, "保存")
+    save:SetPoint("BOTTOMRIGHT", -14, 12)
+    save:SetScript("OnClick", Save)
+
+    local clear = MakeMiniButton(f, 54, 18, "清除")
+    clear:SetPoint("RIGHT", save, "LEFT", -6, 0)
+    clear:SetScript("OnClick", function()
+        if f.itemID then
+            ns.NPC.SetBuy(f.itemID, 0)
+            RefreshNpcFor(f.itemID)
+        end
+        f:Hide()
+    end)
+
+    local cancel = MakeMiniButton(f, 54, 18, "取消")
+    cancel:SetPoint("RIGHT", clear, "LEFT", -6, 0)
+    cancel:SetScript("OnClick", function() f:Hide() end)
+
+    f.box, f.who, f.hint = box, who, hint
+    f:Hide()
+    editor = f
+    return editor
+end
+
+-- 点材料行的「买价」格子调这里: name 只用于弹窗上说明改的是哪个物品
+function ns.UI.EditNpcPrice(itemID, name, cell)
+    if type(itemID) ~= "number" or itemID <= 0 then
+        ns.UI.Notify("这一行还没有解析到物品, 稍等一下再点", 3)
+        return
+    end
+    local e = BuildNpcEditor()
+    if not e then return end
+
+    e.itemID = itemID
+    e.who:SetText(name or ("物品 #" .. tostring(itemID)))
+
+    local cur = ns.NPC and ns.NPC.Buy(itemID)
+    e.box:SetText(cur and ns.NPC.Money(cur) or "")
+    e.box:SetCursorPosition(0)
+    e.hint:SetTextColor(T.rgb(C.faint))
+    e.hint:SetText("1金20银 / 20银 / 1.5金 / 80铜 · 只写数字按银算 · 清空则删除")
+
+    e:ClearAllPoints()
+    -- 居中盖在面板上: 材料行通常贴着列表顶部, 若跟着行锚会被顶出面板外面
+    e:SetPoint("CENTER", frame, "CENTER", 0, 0)
+    e:Show()
+    e.box:SetFocus()
 end
 
 --------------------------------------------------------------------------- 专业图标补全
@@ -1316,16 +1951,49 @@ local function SafeStep(fn, name, ...)
     end
 end
 
+--------------------------------------------------------------------------- 层级
+
+-- 面板层级 (可用 /wgm strata 切换, 默认 DIALOG = 压在 EllesmereUI 上层)
+--
+-- 客户端里 EllesmereUI 各窗口的分布 (grep 全量统计):
+--   FULLSCREEN_DIALOG 47 处 (选项/弹窗/全屏面板)、DIALOG 16 处 (快捷操作层 Quickdraw 等)、
+--   MEDIUM 15 处、TOOLTIP 14 处、HIGH 9 处; 背包 EUI_MainBagFrame 是 MEDIUM
+--   (「窗口显示在背包之上」关掉时改 HIGH 且 frameLevel = 100)。
+-- 所以:
+--   * MEDIUM/LOW + level 1 —— 待在背包与常规 HUD 下面 (上一轮的做法, 会被 EllesmereUI 盖住)
+--   * HIGH      + level 200 + Toplevel —— 压住背包(HIGH,100) 与 HIGH 层窗口
+--   * DIALOG    + level 200 + Toplevel —— 压住 Quickdraw 等 DIALOG 层, 仍在全屏弹窗之下 (默认)
+--   * FULLSCREEN_DIALOG / TOOLTIP —— 连全屏选项页/弹窗也要压住时才用
+-- 顺序: BACKGROUND < LOW < MEDIUM < HIGH < DIALOG < FULLSCREEN < FULLSCREEN_DIALOG < TOOLTIP
+-- (STRATA_ORDER / STRATA_LEVEL 在文件顶部声明, 前面的 DebugInfo 也要用)
+ns.UI.DEFAULT_STRATA = "DIALOG"
+
+function ns.UI.StrataExists(name)
+    return STRATA_ORDER[tostring(name or ""):upper()] ~= nil
+end
+
+function ns.UI.ApplyStrata(name)
+    local db = ns.DB and ns.DB()
+    name = tostring(name or (db and db.strata) or ns.UI.DEFAULT_STRATA):upper()
+    if not STRATA_ORDER[name] then name = ns.UI.DEFAULT_STRATA end
+    if not frame then return name, false end     -- 面板还没建 (未进游戏), 只记配置
+
+    local level = STRATA_LEVEL[name] or 200
+    frame:SetFrameStrata(name)
+    -- 高层才设 Toplevel: 它让面板始终待在该层最上面, 正是"压在 EllesmereUI 上层"要的效果;
+    -- 低层 (LOW/MEDIUM) 反而不能开, 否则又要和背包抢同层最上。
+    -- (Toplevel 只在同一 strata 内生效, 不会越过 DIALOG/FULLSCREEN_DIALOG)
+    frame:SetToplevel(STRATA_ORDER[name] >= STRATA_ORDER.HIGH)
+    -- 高层抬到 200: EllesmereUIBags 背包是 HIGH + level 100, 快捷操作层是 DIALOG,
+    -- 200 能压住它们; 低层压到 1 (MEDIUM/LOW) 方便"待在背包下面"
+    frame:SetFrameLevel(level)
+    return name, true
+end
+
 function ns.UI.Build()
     if frame then return frame end
 
     local f = CreateFrame("Frame", "WOWGoldMakerFrame", UIParent)
-    -- 层级: 和无限副本手册 (DungeonsForever 主窗 Core/MainFrame.lua) 保持一致 —— HIGH。
-    -- 客户端里 EllesmereUI 的快捷操作层 (Quickdraw live frame) 是 DIALOG, 我们原来也用
-    -- DIALOG, 同层下谁后显示谁在上面, 血条/快捷操作常被这块大面板盖住。放到 HIGH 就固定
-    -- 待在操作层下面, 同时又高于动作条 (MEDIUM) 那类常规 HUD。
-    f:SetFrameStrata("HIGH")
-    f:SetToplevel(true)
 
     -- 面板尺寸 = 窗口宽度的 50%, 高度按设计稿比例
     local pw, ph = PanelSize()
@@ -1347,6 +2015,9 @@ function ns.UI.Build()
     tinsert(UISpecialFrames, f:GetName())   -- ESC 关闭
     frame = f
     ns.frame = f
+
+    -- 层级必须等 frame 赋值后再设 (ApplyStrata 里要用到 frame)
+    ns.UI.ApplyStrata()
 
     -- 内容容器: 高度固定为设计稿, 宽度随面板宽度伸展, 整体等比缩放居中
     content = CreateFrame("Frame", nil, f)
@@ -1420,9 +2091,10 @@ function ns.UI.Build()
             iconsTries = iconsTries + 1
             pcall(function() iconsPending = not RefreshProfIcons() end)
         end
-        -- 行图标每 3 秒补一次 (物品数据回包较慢, 逐秒查会浪费)
+        -- 行图标 / NPC 售价每 3 秒补一次 (物品数据回包较慢, 逐秒查会浪费)
         if tickCount % 3 == 0 then
             pcall(RefreshRowIcons)
+            pcall(RefreshRowNpc)
         end
 
         -- 兜底: 头像不该有任何缩放。一旦被动画改成别的值(该客户端循环动画会累积

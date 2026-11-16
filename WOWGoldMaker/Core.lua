@@ -24,7 +24,9 @@ local DEFAULTS = {
     autoShow   = false,                                   -- 登录后自动呼出
     animations = true,                                    -- 界面动画
     pos        = { point = "RIGHT", relPoint = "RIGHT", x = 0, y = 0 },   -- 屏幕右侧垂直居中
+    strata     = "DIALOG",                                -- 主面板层级 (DIALOG = 压在 EllesmereUI 上层)
     prices     = {},                                      -- 拍卖行价格缓存: itemID -> { unit, n, ts }
+    npcBuy     = {},                                      -- NPC 购买价 (手动录入): itemID -> 铜
 }
 
 local db
@@ -85,6 +87,14 @@ ev:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
         WOWGoldMakerDB = WOWGoldMakerDB or {}
         MergeDefaults(WOWGoldMakerDB, DEFAULTS)
         db = WOWGoldMakerDB
+
+        -- 一次性迁移: 0.5.7 把默认层级改成 MEDIUM (待在背包下面), 0.5.8 又要压在
+        -- EllesmereUI 上层, 默认改 DIALOG。老存档里已是 MEDIUM 的视为旧默认值, 跟着改;
+        -- 玩家自己用 /wgm strata 指定的其它值不动。
+        if (db.strataRev or 0) < 1 then
+            if db.strata == "MEDIUM" then db.strata = "DIALOG" end
+            db.strataRev = 1
+        end
 
         if ns.BuildSettings then
             local ok, err = pcall(ns.BuildSettings)
@@ -196,6 +206,33 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
         end
     elseif msg == "ah clear" or msg == "查价 清空" then
         if ns.Auction then ns.Auction.Clear() end
+    elseif msg == "npc" or msg == "npc buy" then
+        -- NPC 收购价是客户端自带的, 不用管; 这里只管玩家手记的「购买价」
+        local n = (ns.NPC and ns.NPC.BuyCount()) or 0
+        ns.Print(format("已记录 %d 条 NPC 购买价 (材料行点「买价」格子录入)", n))
+        if ns.NPC then
+            print("  |cff8a929e/wgm npc clear|r 清空这些记录")
+        end
+    elseif msg == "npc clear" or msg == "npc 清空" then
+        local n = (ns.NPC and ns.NPC.ClearBuy()) or 0
+        ns.Print(format("已清空 %d 条 NPC 购买价", n))
+    elseif msg == "strata" or msg == "层级" then
+        local cur, live = ns.UI.ApplyStrata()
+        ns.Print("当前层级: " .. cur .. (live and "" or " (面板未创建, 登录后生效)"))
+        print("  |cff8a929e可选: background / low / medium / high / dialog / fullscreen / fullscreen_dialog / tooltip|r")
+        print("  |cff8a929e默认 DIALOG: 压在 EllesmereUI (快捷操作层/背包) 上面, 全屏弹窗仍在其上|r")
+        print("  |cff8a929e想待在背包下面: /wgm strata medium  · 想连全屏弹窗都压住: /wgm strata tooltip|r")
+    elseif msg:match("^strata ") or msg:match("^层级 ") then
+        local want = (msg:match("^strata (.+)$") or msg:match("^层级 (.+)$")):upper():gsub(" ", "_")
+        if not ns.UI.StrataExists or not ns.UI.StrataExists(want) then
+            ns.Print("|cffff5555未知层级:|r " .. want)
+            print("  可用: BACKGROUND / LOW / MEDIUM / HIGH / DIALOG / FULLSCREEN / FULLSCREEN_DIALOG / TOOLTIP")
+        else
+            ns.DB().strata = want
+            local applied, live = ns.UI.ApplyStrata(want)
+            ns.Print("层级已切到 " .. applied
+                .. (live and "，已保存" or "，面板未创建, 登录后生效"))
+        end
     elseif msg == "help" then
         ns.Print("命令列表:")
         print("  |cffe8c25a/wgm|r            打开 / 关闭主界面")
@@ -210,6 +247,11 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
         print("  |cffe8c25a/wgm ah|r         拍卖行查价状态 (API / 是否打开 / 缓存)")
         print("  |cffe8c25a/wgm ah list|r    逐条列出缓存价格与缺价原因")
         print("  |cffe8c25a/wgm ah clear|r   清空价格缓存")
+        print("  |cffe8c25a/wgm npc|r        已记录的 NPC 购买价条数")
+        print("  |cffe8c25a/wgm npc clear|r  清空手动录入的 NPC 购买价")
+        print("  |cffe8c25a/wgm strata|r     显示/切换面板层级 (默认 DIALOG, 压在 EllesmereUI 上层)")
+        print("  |cffe8c25a/wgm strata medium|r  降到 MEDIUM (待在背包下面)")
+        print("  |cffe8c25a/wgm strata tooltip|r 升到 TOOLTIP (压住全屏弹窗)")
     else
         ns.UI.Toggle()
     end

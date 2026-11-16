@@ -19,3 +19,6 @@ __pycache__/
 
 # Node 工具缓存 (语法校验等临时依赖)
 node_modules/
+
+# 截图等工具产物
+tools/*.png

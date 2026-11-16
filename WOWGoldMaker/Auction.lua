@@ -453,12 +453,10 @@ Hooks.item      = pcall(function() ev:RegisterEvent("ITEM_SEARCH_RESULTS_UPDATED
 Hooks.ahShow    = pcall(function() ev:RegisterEvent("AUCTION_HOUSE_SHOW") end) and true or false
 
 ev:SetScript("OnEvent", function(_, event, arg)
-    -- 拍卖行窗口和主面板现在同属 HIGH 层, 谁后显示谁在上面。打开拍卖行时把自己提到
-    -- HIGH 的最上面, 免得右侧「查价」按钮被拍卖行窗口挡住 —— 只在 HIGH 内部提升,
-    -- 不会越过 DIALOG 的操作层。
+    -- 主面板现在在 MEDIUM 层 (待在背包下面), 拍卖行窗口在更高层, 必定盖住面板右侧,
+    -- 所以这里不再 Raise —— 一边 SetFrameLevel(1) 压到同层最低、一边 Raise 顶到最上,
+    -- 两者是矛盾的。查价时靠页面浮层提示, 不依赖面板可见。
     if event == "AUCTION_HOUSE_SHOW" then
-        local f = ns.frame
-        if f then pcall(f.Raise, f) end
         return
     end
 
@@ -489,7 +487,11 @@ end)
 -- rec: ns.Prof.Get() 里的一条 (含 item / made / mats)
 -- onDone(out): out 见 Calculate
 -- onProgress(done, total)
-function AH.CheckRecipe(rec, onDone, onProgress)
+-- force: true = 无视缓存, 全部重新发查询
+--   「查价」按钮走的就是 force —— 按钮的语义是「现在的行情是多少」, 拿半小时前的缓存
+--   回显等于骗人: 挂单被扫光了、价格翻了倍, 界面上还是旧数字, 而且看起来"查过了"。
+--   已经在队列里排着的物品不再重复入队 (那本身就是刚发出去、还没回包的查询)。
+function AH.CheckRecipe(rec, onDone, onProgress, force)
     if not (rec and rec.item) then return end
 
     -- 收集要查的物品: 产物 + 全部材料 (按 id 去重)
@@ -505,9 +507,11 @@ function AH.CheckRecipe(rec, onDone, onProgress)
     end
 
     local res = {}
-    for i = 1, #ids do
-        local e = AH.Price(ids[i])
-        if e then res[ids[i]] = e end
+    if not force then
+        for i = 1, #ids do
+            local e = AH.Price(ids[i])
+            if e then res[ids[i]] = e end
+        end
     end
 
     local pending = 0

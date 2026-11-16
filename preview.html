@@ -171,6 +171,42 @@
   .list::-webkit-scrollbar-track { background: rgba(255,255,255,.05); }
 
   /* ---------- 页面内浮层提示 (对应 UI.lua 的 ns.UI.Notify) ---------- */
+  /* ---------- NPC 买价录入弹窗 (对应 ns.UI.EditNpcPrice) ----------
+     300x126 设计像素, 居中盖在面板上; 输入框 + 一行提示 + 三个按钮 */
+  .npc-editor {
+    position: absolute; left: 50%; top: 50%;
+    width: 300px; height: 126px;
+    transform: translate(-50%, -50%);
+    border-radius: 10px;
+    background: linear-gradient(160deg, rgba(38,34,28,.98), rgba(18,18,21,.98));
+    box-shadow: 0 14px 34px rgba(0,0,0,.6), inset 0 0 0 1px rgba(232,194,90,.20);
+    padding: 12px 14px; box-sizing: border-box;
+    display: none; z-index: 5;
+  }
+  .npc-editor.on { display: block; }
+  .ne-title { font-size: 11px; font-weight: 600; color: var(--gold); }
+  .ne-who { font-size: 9px; color: var(--muted); margin-top: 3px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ne-box {
+    margin-top: 9px; height: 22px; border-radius: 5px;
+    background: rgba(255,255,255,.06); box-shadow: inset 0 0 0 1px rgba(255,255,255,.06);
+    display: flex; align-items: center; padding: 0 6px;
+    font-size: 11px; color: var(--text);
+  }
+  .ne-box i { display: inline-block; width: 1px; height: 12px; background: var(--gold);
+    margin-left: 2px; }
+  .ne-hint { font-size: 8px; color: var(--faint); margin-top: 5px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ne-btns { position: absolute; right: 14px; bottom: 12px; display: flex; gap: 6px; }
+  .ne-btns button {
+    width: 54px; height: 18px; border: 0; border-radius: 4px; cursor: pointer;
+    font-size: 9px; color: var(--muted); background: rgba(255,255,255,.10);
+    font-family: inherit;
+  }
+  .ne-btns button:hover { background: rgba(255,255,255,.18); color: var(--text); }
+  .ne-btns button.primary { background: rgba(232,194,90,.22); color: var(--gold); }
+  .ne-btns button.primary:hover { background: rgba(232,194,90,.32); color: var(--gold-hi); }
+
   .toast {
     position: absolute; left: 50%; bottom: 18px;
     height: 26px; max-width: calc(100% - 40px);
@@ -188,85 +224,108 @@
   }
   .toast.on { opacity: 1; transform: translate(-50%, 0); }
 
-  .lrow {
-    height: 32px; display: flex; align-items: center; gap: 7px;
-    padding: 0; border-radius: 4px;
-  }
-  .lrow.odd { background: rgba(255,255,255,.025); }
-  .lrow:hover { background: rgba(255,255,255,.05); }
+  /* 一条配方 = 一行商品 + 若干行材料 (一样材料一行),
+     材料行左缩进一个商品图标的宽度, 空出来的那一段画从属虚线连回商品行 */
+  .blk { display: flex; flex-direction: column; border-radius: 4px; }
+  .blk.odd { background: rgba(255,255,255,.025); }
+  .blk:hover { background: rgba(255,255,255,.05); }
 
-  .lrow .ico {
+  .blk .pline { height: 26px; display: flex; align-items: center; gap: 7px; padding: 0; }
+
+  .blk .ico {
     width: 15px; height: 15px; border-radius: 4px; flex: 0 0 15px;
-    align-self: flex-start; margin-top: 3px;
     background: linear-gradient(160deg, #4a4033, #241f18);
     box-shadow: inset 0 0 0 1px rgba(255,255,255,.10);
   }
-  .lrow .ico.heal { background: linear-gradient(160deg, #7d2b2b, #3d1414); box-shadow: inset 0 0 0 1px rgba(255,150,150,.28); }
-  .lrow .ico.cook { background: linear-gradient(160deg, #7a4a1c, #3a2210); box-shadow: inset 0 0 0 1px rgba(255,190,110,.28); }
+  .blk .ico.heal { background: linear-gradient(160deg, #7d2b2b, #3d1414); box-shadow: inset 0 0 0 1px rgba(255,150,150,.28); }
+  .blk .ico.cook { background: linear-gradient(160deg, #7a4a1c, #3a2210); box-shadow: inset 0 0 0 1px rgba(255,190,110,.28); }
 
   /* 商品列: 第一行名称, 第二行售价 */
-  .lrow .prod {
-    flex: 0 0 var(--tw, 80px); min-width: 0;
-    display: flex; flex-direction: column; justify-content: center; gap: 1px;
+  .blk .prod {
+    flex: 0 0 var(--tw, 180px); min-width: 0;
+    display: flex; flex-direction: column; justify-content: center;
   }
-  .lrow .pname {
+  .blk .pname {
     font-size: 10px; font-weight: 600; color: var(--text);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-  .lrow .pname .dim { color: #9d9d9d; font-weight: 400; }
-  .lrow .psell { font-size: 8px; color: var(--gold); white-space: nowrap;
+  .blk .pname .dim { color: #9d9d9d; font-weight: 400; }
+  .blk .pname .pnpc { font-size: 7px; font-weight: 400; color: var(--muted); margin-left: 8px; }
+  .blk .psell { font-size: 8px; color: var(--gold); white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis; }
-  .lrow .psell.dim { color: var(--faint); }
-  .lrow .psell.bad { color: var(--red); }
+  .blk .psell.dim { color: var(--faint); }
+  .blk .psell.bad { color: var(--red); }
 
-  /* 材料列: 每样材料一格 —— 图标 / 名字×数量 / 单价 (与 UI.lua 的三行一致) */
-  .lrow .mats { flex: 1 1 0; min-width: 0; display: flex; align-self: stretch; }
-  .lrow .mcell {
-    flex: 1 1 0; min-width: 0;
-    display: flex; flex-direction: column; justify-content: flex-start;
-    gap: 1px; padding-top: 1px;
+  /* 材料行: 一行一样材料 —— [从属虚线] 图标 名字 .......... 金额 */
+  .mlines { position: relative; padding-bottom: 2px; }
+  /* 竖虚线: 从商品图标下沿一直拖到最后一行材料, 一串 2px 小段 (对应 LayoutTree) */
+  .mlines::before {
+    content: ""; position: absolute; left: 6px; top: -2px; bottom: 7px; width: 1px;
+    background: repeating-linear-gradient(to bottom,
+      rgba(255,255,255,.20) 0 2px, rgba(255,255,255,0) 2px 5px);
   }
-  /* 材料小图标 (对应 Lua 的 CELL_ICON 8px) */
-  .lrow .mico {
-    width: 8px; height: 8px; border-radius: 2px; flex: 0 0 8px;
+  .mlines .mline {
+    position: relative; height: 13px; margin-left: 22px;
+    display: flex; align-items: center; gap: 4px; padding-right: 48px;
+  }
+  /* 每行伸向竖虚线的一小段横线 */
+  .mlines .mline::before {
+    content: ""; position: absolute; left: -14px; width: 11px; height: 1px;
+    background: rgba(255,255,255,.16);
+  }
+  .mlines .mline:hover { background: rgba(255,255,255,.06); border-radius: 3px; }
+  .mlines .mico {
+    width: 9px; height: 9px; border-radius: 2px; flex: 0 0 9px;
     background: linear-gradient(160deg, #4a4033, #241f18);
     box-shadow: inset 0 0 0 1px rgba(255,255,255,.10);
   }
-  .lrow .mname {
-    font-size: 7px; color: var(--muted);
+  .mlines .mname {
+    flex: 1 1 auto; min-width: 0; font-size: 7px; color: var(--muted);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-  .lrow .mname .dim { color: #8a929e; }
-  .lrow .mprice {
-    font-size: 7px; color: var(--gold);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  .mlines .mname.dim { color: #8a929e; }
+  /* NPC 两列: 卖价 (客户端自带, 只读) + 买价 (玩家手记, 可点) */
+  .mlines .mnpc {
+    flex: 0 0 54px; margin-left: 2px; text-align: right; font-size: 7px;
+    color: var(--muted); white-space: nowrap; overflow: hidden;
   }
-  .lrow .mprice.dim { color: var(--faint); }
-  .lrow .mprice.bad { color: var(--red); }
+  .mlines .mbuy {
+    flex: 0 0 46px; margin-left: 2px; text-align: right; font-size: 7px;
+    color: var(--teal); white-space: nowrap; overflow: hidden;
+    cursor: pointer;
+  }
+  .mlines .mbuy.empty { color: var(--faint); }
+  .mlines .mbuy:hover { color: var(--gold-hi); }
+  .mlines .mprice {
+    flex: 0 0 84px; margin-left: 6px; text-align: right; font-size: 7px; color: var(--gold);
+    white-space: nowrap; overflow: hidden;
+  }
+  .mlines .mprice.dim { color: var(--faint); }
+  .mlines .mprice.bad { color: var(--red); }
 
-  .lrow .req {
+  .blk .req {
     flex: 0 0 auto; text-align: right;
     font-size: 9px; color: #8a929e;
   }
-  .lrow .req.gold { color: var(--gold); font-weight: 700; }
+  .blk .req.gold { color: var(--gold); font-weight: 700; }
 
   /* 价格列 + 查价按钮 */
-  .lrow .price {
+  .blk .price {
     flex: 0 0 var(--pw, 66px); text-align: right; font-size: 8px;
     color: var(--faint); white-space: nowrap; overflow: hidden;
   }
-  .lrow .price.good { color: var(--green); font-weight: 600; }
-  .lrow .price.bad  { color: var(--red); font-weight: 600; }
-  .lrow .price.gold { color: var(--gold); }
-  .lrow .price.wait { color: var(--gold); }
-  .lrow .qbtn {
+  .blk .price.good { color: var(--green); font-weight: 600; }
+  .blk .price.bad  { color: var(--red); font-weight: 600; }
+  .blk .price.gold { color: var(--gold); }
+  .blk .price.wait { color: var(--gold); }
+  .blk .qbtn {
     flex: 0 0 40px; height: 14px; border-radius: 4px;
     background: rgba(255,255,255,.10);
     display: flex; align-items: center; justify-content: center;
     font-size: 8px; color: var(--muted); cursor: pointer;
     transition: background .15s, color .15s;
   }
-  .lrow .qbtn:hover { background: rgba(255,255,255,.20); color: var(--text); }
+  .blk .qbtn:hover { background: rgba(255,255,255,.20); color: var(--text); }
 
   /* ---------- 行悬停提示 (对应 ns.UI.ShowRowTooltip) ----------
      整块 UI 收小一档后长标题更容易被截断, 悬停给出完整名字 + 材料清单 */
@@ -331,7 +390,7 @@
 </head>
 <body>
 
-<h1><b>WOWGOLDMAKER</b> · 单页预览 (v0.5.5)</h1>
+<h1><b>WOWGOLDMAKER</b> · 单页预览 (v0.6.1)</h1>
 
 <div class="window">
   <div class="shadow"></div>
@@ -370,6 +429,17 @@
 
     <!-- 页面内提示 (拍卖行未打开等), 对应 ns.UI.Notify -->
     <div class="toast" id="toast"><i></i><span id="toastText"></span></div>
+
+    <!-- NPC 买价录入弹窗, 对应 ns.UI.EditNpcPrice -->
+    <div class="npc-editor" id="npcEditor">
+      <div class="ne-title">NPC 购买价</div>
+      <div class="ne-who">空瓶</div>
+      <div class="ne-box">1银20铜<i></i></div>
+      <div class="ne-hint">1金20银 / 20银 / 1.5金 / 80铜 · 只写数字按银算 · 清空则删除</div>
+      <div class="ne-btns">
+        <button>取消</button><button>清除</button><button class="primary">保存</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -382,7 +452,7 @@
 </div>
 
 <div class="settings">
-  <h2><span>金币工坊</span> v0.5.5</h2>
+  <h2><span>金币工坊</span> v0.6.1</h2>
   <div class="sub">魔兽世界无限服 · 金币工具箱</div>
   <hr>
   <div class="row on" id="row1"><div class="box"><span class="check">✓</span></div><span class="lbl">登录后自动呼出主界面</span></div>
@@ -488,17 +558,29 @@
     return [...agg.entries()].sort((a, b) => b[1] - a[1]);
   }
 
-  /* 材料格: 每样材料一格, 图标 / 「名字×数量」 / 金额 (查价后填) */
-  function matsCells(mats) {
-    if (!mats.length) {
-      return `<div class="mcell"><div class="mname dim">无材料</div></div>`;
-    }
-    return mats.map(([n, c]) =>
-      `<div class="mcell" data-cnt="${c}">
+  /* NPC 价格 (演示用假数据, 游戏里卖价来自客户端物品库、买价来自玩家手记)
+     sell = 卖给商人, buy = 从商人买 (只有一部分材料记过) */
+  function hashOf(s) {
+    let h = 7;
+    for (const ch of s) h = (h * 131 + ch.codePointAt(0)) % 999983;
+    return h;
+  }
+  function npcSellOf(name) { return ((hashOf(name) % 60) + 1) * 100 + 50; }
+  function npcBuyOf(name) { const h = hashOf(name + "#buy"); return h % 3 === 0 ? ((h % 25) + 1) * 100 : 0; }
+
+  /* 材料行: 一样材料一行 —— 图标 / 名字 / NPC 卖价 / NPC 买价 / 金额 (查价后填) */
+  function matLines(mats) {
+    if (!mats.length) return "";
+    return `<div class="mlines">` + mats.map(([n, c]) => {
+      const buy = npcBuyOf(n);
+      return `<div class="mline" data-cnt="${c}" data-n="${n}">
          <i class="mico"></i>
-         <div class="mname">${n}<span class="dim">×${c}</span></div>
+         <div class="mname">${n}</div>
+         <div class="mnpc">卖 ${money(npcSellOf(n))}</div>
+         <div class="mbuy${buy ? "" : " empty"}">${buy ? "买 " + money(buy) : "＋买价"}</div>
          <div class="mprice"></div>
-       </div>`).join("");
+       </div>`;
+    }).join("") + `</div>`;
   }
 
   /* 查价相关的小工具 (与 Auction.lua 的口径一致: 铜 → 金/银) */
@@ -512,8 +594,8 @@
     return `${c}铜`;
   }
 
-  /* 材料格金额: 与 UI.lua 的 MatPriceText 同一套分档 ——
-     数量 > 1 时真正花的是「单价 × 数量」, 但格子很窄 (4 样材料只剩 ~30px), 按格宽挑一种:
+  /* 材料行金额: 与 UI.lua 的 MatPriceText 同一套分档 ——
+     数量 > 1 时真正花的是「单价 × 数量」, 面板拖窄时按可用宽度挑一种:
        宽格  1金20银×3 = 3金60银
        中格  ×3 3金60银
        窄格  共3金60银
@@ -571,31 +653,34 @@
     if (curMode === "mats") {
       summarize(p.rows).forEach(([n, c], i) => {
         const unit = (i * 733) % 8000 + 200;
-        html += `<div class="lrow${i % 2 ? " odd" : ""}">
-          <div class="ico ${cls}"></div>
-          <div class="prod">
-            <div class="pname">${n}</div>
-            <div class="psell">单价 ${money(unit)}/个</div>
+        html += `<div class="blk${i % 2 ? " odd" : ""}">
+          <div class="pline">
+            <div class="ico ${cls}"></div>
+            <div class="prod">
+              <div class="pname">${n}<span class="pnpc">NPC ${money(npcSellOf(n))}</span></div>
+              <div class="psell">单价 ${money(unit)}/个</div>
+            </div>
+            <div class="req gold">×${c}</div>
+            <div class="price gold">共 ${money(unit * c)}</div>
+            <div class="qbtn" style="visibility:hidden">查价</div>
           </div>
-          <div class="mats"></div>
-          <div class="req gold">×${c}</div>
-          <div class="price gold">共 ${money(unit * c)}</div>
-          <div class="qbtn" style="visibility:hidden">查价</div>
         </div>`;
       });
     } else {
       p.rows.forEach(([n, made, req, mats], i) => {
         const md = made > 1 ? ` <span class="dim">×${made}</span>` : "";
-        html += `<div class="lrow${i % 2 ? " odd" : ""}">
-          <div class="ico ${cls}"></div>
-          <div class="prod">
-            <div class="pname">${n}${md}</div>
-            <div class="psell" data-made="${made}"></div>
+        html += `<div class="blk${i % 2 ? " odd" : ""}">
+          <div class="pline">
+            <div class="ico ${cls}"></div>
+            <div class="prod">
+              <div class="pname">${n}${md}<span class="pnpc">NPC ${money(npcSellOf(n))}</span></div>
+              <div class="psell" data-made="${made}"></div>
+            </div>
+            <div class="req">[${req}]</div>
+            <div class="price"></div>
+            <div class="qbtn" data-i="${i}">查价</div>
           </div>
-          <div class="mats">${matsCells(mats)}</div>
-          <div class="req">[${req}]</div>
-          <div class="price"></div>
-          <div class="qbtn" data-i="${i}">查价</div>
+          ${matLines(mats)}
         </div>`;
       });
     }
@@ -605,12 +690,12 @@
     $switch.textContent = curMode === "list" ? "材料汇总" : "配方列表";
 
     /* 列宽与 UI.lua 的 RowColumns 同一套算法:
-       先扣掉图标 / 按钮 / 价格 / 技能这些固定宽, 剩下的按 36:64 分给商品与材料 */
+       材料竖排后商品行只剩「图标 + 商品名 + 技能 + 盈亏 + 查价」,
+       剩余宽度全给商品名 */
     const rowW = $list.clientWidth || 392;
-    const priceW = Math.max(56, Math.min(120, rowW * 0.17));
+    const priceW = Math.max(56, Math.min(110, rowW * 0.16));
     const rightFixed = 40 + 2 + 6 + priceW + 6 + 22;
-    const restW = Math.max(150, rowW - 22 - 8 - rightFixed);
-    const titleW = Math.max(72, restW * 0.36);
+    const titleW = Math.max(90, rowW - 22 - 8 - rightFixed);
     $list.style.setProperty("--tw", titleW.toFixed(1) + "px");
     $list.style.setProperty("--pw", priceW.toFixed(1) + "px");
 
@@ -620,6 +705,7 @@
           title: n,
           sub: "材料汇总",
           mats: [],
+          npc: "卖商人 " + money(npcSellOf(n)) + "/个",
           hint: "共需 ×" + c,
         }))
       : p.rows.map(([n, made, req, mats]) => {
@@ -630,17 +716,18 @@
             title: n + md,
             sub,
             mats,
+            npc: "卖商人 " + money(npcSellOf(n)) + "/个",
             hint: "点右边的「查价」看拍卖行价格与盈亏",
           };
         });
-    [...$list.querySelectorAll(".lrow")].forEach((el, i) => { el._tip = tipRows[i]; });
+    [...$list.querySelectorAll(".blk")].forEach((el, i) => { el._tip = tipRows[i]; });
 
     // 查价按钮: 演示"查询中 n/m → 盈/亏"的过程
     $list.querySelectorAll(".qbtn").forEach(btn => {
       btn.onclick = e => {
         e.stopPropagation();
-        const row = btn.parentElement;
-        const cell = row.querySelector(".price");
+        const row = btn.closest(".blk");
+        const cell = row.querySelector(".pline .price");
 
         // 拍卖行没开: 提示落在页面上, 不写聊天框 (与游戏内 CheckRowPrice 一致)
         if (!$ahOpen.checked) {
@@ -650,7 +737,7 @@
           return;
         }
 
-        const total = 2 + row.querySelectorAll(".mcell").length;
+        const total = 2 + row.querySelectorAll(".mline").length;
         let done = 0;
         btn.textContent = "查询中";
         cell.className = "price wait";
@@ -663,7 +750,10 @@
           clearInterval(timer);
           btn.textContent = "查价";
 
-          const seed = Number(btn.dataset.i) + 5;
+          // 每点一次都当成一次全新查询 (对应游戏内 force 重查), 所以价格会小幅浮动,
+          // 不会像缓存那样点几次都是同一个数字
+          btn._n = (btn._n || 0) + 1;
+          const seed = Number(btn.dataset.i) + 5 + btn._n * 3;
 
           // 产物售价 → 商品名下方 (made > 1 时写整份的售价, 与盈亏口径一致)
           const sell = (seed * 1370) % 9000 + 800;
@@ -676,14 +766,15 @@
               : "售价 " + money(sell) + "/个";
           }
 
-          // 材料金额 → 每格材料名下方 (数量 > 1 时显示整份的钱, 写法随格宽退化)
-          row.querySelectorAll(".mcell").forEach((mc, k) => {
+          // 材料金额 → 每样材料那一行的右侧 (数量 > 1 时写出整份的钱)
+          row.querySelectorAll(".mline").forEach((mc, k) => {
             const mp = mc.querySelector(".mprice");
             if (!mp) return;
             const cnt = Number(mc.dataset.cnt || 1) || 1;
             const unit = (seed * 733 + k * 977) % 4000 + 150;
+            mc.dataset.p = unit;                 // 该行独立提示要用
             mp.className = "mprice";
-            mp.innerHTML = matPriceHTML(unit, cnt, mc.clientWidth);
+            mp.innerHTML = matPriceHTML(unit, cnt, 84);
           });
 
           const v = mockProfit(seed);
@@ -694,10 +785,13 @@
     });
   }
 
-  /* ---------- 行悬停提示 ----------
-     鼠标在行上时把完整标题和材料清单浮出来, 长名字被省略号截掉也能看全 */
+  /* ---------- 逐物悬停提示 ----------
+     与游戏内一致: 指着哪样东西就只讲哪样 ——
+       材料格  → 该材料的详情 (本配方要几个 / 单价 / 合计)
+       行其它区 → 商品详情 (完整标题 / 技能 / 材料清单 / 成本盈亏)
+     长名字被省略号截掉也能在这里看全 */
   const $tip = document.getElementById("tip");
-  let tipRow = null;
+  let tipTarget = null;
 
   function placeTip(e) {
     const pad = 14;
@@ -710,30 +804,63 @@
     $tip.style.top = y + "px";
   }
 
-  function showTip(row) {
-    const t = row._tip;
-    if (!t) return;
+  /* 材料行的独立提示数据 (对应 ns.UI.ShowMatTooltip) */
+  function matTip(cell) {
+    const name = cell.dataset.n;
+    if (!name) return null;
+    const cnt = Number(cell.dataset.cnt || 1) || 1;
+    const unit = Number(cell.dataset.p || 0);
+    const lines = [`本配方需要 ×${cnt}`];
+    if (unit > 0) {
+      lines.push(`拍卖行最低单价 ${money(unit)}/个`);
+      lines.push(`${cnt} 个合计 ${money(unit * cnt)}`);
+    } else {
+      lines.push("还没有价格, 点右边「查价」");
+    }
+    const sell = npcSellOf(name), buy = npcBuyOf(name);
+    lines.push(`卖商人 ${money(sell)}/个 · ${cnt} 个共 ${money(sell * cnt)}`);
+    lines.push(buy ? `从商人买 ${money(buy)}/个 (自己记的价)` : "从商人买: 点「买价」格子自己记一个");
+    return { title: name, sub: "材料", lines };
+  }
+
+  function showTip(el) {
+    const t = el.classList.contains("mline") ? matTip(el) : el._tip;
+    if (!t) return false;
     const html = [`<div class="t">${t.title}</div>`];
     if (t.sub) html.push(`<div class="sub">${t.sub}</div>`);
     if (t.mats && t.mats.length) {
       html.push(...t.mats.map(([n, c]) =>
         `<div class="mrow"><span>${n}</span><span>×${c}</span></div>`));
     }
+    if (t.npc) {
+      html.push(`<div class="mrow"><span>${t.npc}</span><span></span></div>`);
+    }
+    if (t.lines && t.lines.length) {
+      html.push(...t.lines.map(l => `<div class="mrow"><span>${l}</span><span></span></div>`));
+    }
     if (t.hint) html.push(`<div class="hint">${t.hint}</div>`);
     $tip.innerHTML = html.join("");
     $tip.classList.add("on");
+    return true;
+  }
+
+  /* 指针下真正要讲的对象: 有名字的材料行优先, 否则整块配方 */
+  function tipTargetOf(el) {
+    const cell = el.closest && el.closest(".mline");
+    if (cell && cell.dataset.n) return cell;
+    return (el.closest && el.closest(".blk")) || null;
   }
 
   $list.addEventListener("mousemove", e => {
-    const row = e.target.closest(".lrow");
-    if (row !== tipRow) {
-      tipRow = row;
-      if (row) showTip(row); else $tip.classList.remove("on");
+    const target = tipTargetOf(e.target);
+    if (target !== tipTarget) {
+      tipTarget = target;
+      if (!target || !showTip(target)) $tip.classList.remove("on");
     }
-    if (row && $tip.classList.contains("on")) placeTip(e);
+    if (target && $tip.classList.contains("on")) placeTip(e);
   });
   $list.addEventListener("mouseleave", () => {
-    tipRow = null;
+    tipTarget = null;
     $tip.classList.remove("on");
   });
 
@@ -742,12 +869,46 @@
     renderList();
   };
 
+  /* 点材料行的「买价」格子 → 弹出录入框 (对应 ns.UI.EditNpcPrice) */
+  const $npcEditor = document.getElementById("npcEditor");
+  $list.addEventListener("click", e => {
+    const mb = e.target.closest && e.target.closest(".mbuy");
+    if (!mb) return;
+    e.stopPropagation();
+    const row = mb.closest(".mline");
+    $npcEditor.querySelector(".ne-who").textContent = row ? row.dataset.n : "";
+    const cur = mb.classList.contains("empty") ? "1银" : mb.textContent.replace(/^\s*买\s*/, "");
+    $npcEditor.querySelector(".ne-box").innerHTML = cur + "<i></i>";
+    $npcEditor.classList.add("on");
+  });
+  $npcEditor.querySelectorAll(".ne-btns button").forEach(b => {
+    b.onclick = () => $npcEditor.classList.remove("on");
+  });
+
+  /* 截图/演示用: ?m=mats 直接进材料汇总模式 */
+  if (new URLSearchParams(location.search).get("m") === "mats") {
+    curMode = "mats";
+  }
+
   renderTabs();
   renderList();
 
   /* ==================== 其它 ==================== */
   for (const id of ["row1", "row2"]) {
     document.getElementById(id).onclick = e => e.currentTarget.classList.toggle("on");
+  }
+
+  /* 截图/演示用: preview.html?q=1 自动勾上「拍卖行已打开」, 并把前几个配方各查一遍价 */
+  if (new URLSearchParams(location.search).get("q") === "1") {
+    $ahOpen.checked = true;
+    [...document.querySelectorAll(".blk .qbtn")].slice(0, 5).forEach((btn, i) => {
+      setTimeout(() => btn.click(), 100 + i * 1100);
+    });
+  }
+
+  /* 截图/演示用: ?edit=1 直接弹出 NPC 买价录入框 */
+  if (new URLSearchParams(location.search).get("edit") === "1") {
+    $npcEditor.classList.add("on");
   }
 
   const t0 = Date.now();
