@@ -87,24 +87,36 @@ end
 
 --------------------------------------------------------------------------- 专业注册表
 
+-- 专业页签图标 fileID。这一组数字是从游戏里实测得到的
+-- (GetProfessionInfo(index) 的第 2 个返回值), 比贴图名可靠得多:
+-- 贴图名在这个客户端可能不存在, 而 fileID 是客户端数据包内的真实编号。
+-- 有它就优先用它 —— 显示效果与游戏内专业页完全一致, 且不再依赖角色是否学过该专业。
+P.ICON_ID = {
+    ["first-aid"] = 135966,   -- 急救 (红色血滴)
+    ["cooking"]   = 133971,   -- 烹饪 (烤鸡)
+    ["skinning"]  = 134366,   -- 剥皮 (暂无配方数据, 先存档)
+}
+
 -- iconSpell / iconItem 只用于"这个专业的代表图标", 不参与配方数据。
--- skillLine 是专业页签的 SkillLine ID (急救 129 / 烹饪 185), 优先用它取游戏内图标。
+-- skillLine 是专业页签的 SkillLine ID (急救 129 / 烹饪 185)。
 P.LIST = {
     {
-        key       = "first-aid",
-        name      = "急救",
-        skillLine = 129,
-        iconSpell = 3275,      -- 亚麻绷带 → 绷带图标 (页签图标取不到时兜底)
-        iconItem  = 1251,      -- 亚麻绷带 (物品)
-        note      = "绷带 · 药膏 · 解毒",
+        key         = "first-aid",
+        name        = "急救",
+        skillLine   = 129,
+        iconTexture = P.ICON_ID["first-aid"],
+        iconSpell   = 3275,      -- 亚麻绷带 → 绷带图标 (兜底)
+        iconItem    = 1251,      -- 亚麻绷带 (物品)
+        note        = "绷带 · 药膏 · 解毒",
     },
     {
-        key       = "cooking",
-        name      = "烹饪",
-        skillLine = 185,
-        iconSpell = 2538,      -- 焦狼肉 → 熟食图标 (兜底)
-        iconItem  = 6290,
-        note      = "食物 · 饮料 · 增益",
+        key         = "cooking",
+        name        = "烹饪",
+        skillLine   = 185,
+        iconTexture = P.ICON_ID["cooking"],
+        iconSpell   = 2538,      -- 焦狼肉 → 熟食图标 (兜底)
+        iconItem    = 6290,
+        note        = "食物 · 饮料 · 增益",
     },
 }
 
@@ -128,11 +140,14 @@ function P.Icon(key)
         pcall(RefreshProfessionIcons)
     end
 
-    -- 1) 专业页签图标: 与游戏内专业页显示的完全同一个贴图
+    -- 1) 实测 fileID: 与游戏内专业页完全一致, 且不依赖角色是否学过该专业
+    if p.iconTexture then iconCache[key] = p.iconTexture; return p.iconTexture end
+
+    -- 2) 运行时页签图标 (角色学过该专业时可用)
     local tabIcon = (p.skillLine and skillLineIcon[p.skillLine]) or nameIcon[p.name]
     if tabIcon then iconCache[key] = tabIcon; return tabIcon end
 
-    -- 2) 法术贴图 → 3) 首条配方法术 → 4) 物品图标 → 5) 首条配方产物
+    -- 3) 法术贴图 → 4) 首条配方法术 → 5) 物品图标 → 6) 首条配方产物
     local data  = ns.ProfData and ns.ProfData[key]
     local first = data and data[1]
 
@@ -189,6 +204,7 @@ function P.DebugIcons()
         local data  = ns.ProfData and ns.ProfData[p.key]
         local first = data and data[1]
         print(format("  |cffe8c25a%s|r (skillLine=%s)", p.name, tostring(p.skillLine)))
+        print(format("    实测 fileID → %s", tostring(p.iconTexture)))
         print(format("    页签图标 → %s", tostring(skillLineIcon[p.skillLine] or nameIcon[p.name])))
         print(format("    法术 %s → %s", tostring(p.iconSpell), tostring(spellTexture(p.iconSpell))))
         print(format("    配方法术 %s → %s", tostring(first and first.spell), tostring(first and spellTexture(first.spell))))
