@@ -291,6 +291,7 @@ local function BuildHero(f)
     coin:SetSize(44, 44)
     coin:SetPoint("TOPLEFT", f, "TOPLEFT", 26, -68)
     coin:SetMask(T.PATH .. "circle")
+    refs.coin = coin
 
     local coinGlow = T.Glow(f, 96, C.gold, 0.16, "glow-soft")
     coinGlow:SetPoint("CENTER", coin, "CENTER")
@@ -305,15 +306,19 @@ local function BuildHero(f)
         a:SetSmoothing("IN_OUT")
         ag:Play()
 
-        -- 图标轻微呼吸缩放 (改用 Scale: 绝对值动画不会累积偏移)
+        -- 图标呼吸: 只用 Alpha
+        -- 注意: 本客户端循环播放 Scale / Translation 时会把每轮增量累加到当前变换上
+        -- (不是从基准值重来), 几轮后图标会持续放大直至铺满屏幕。Alpha 是覆盖式标量且被
+        -- clamp 在 0-1, 循环安全。见 2026-11-16 笔记「禁用循环 Scale/Translation」。
         local bob = coin:CreateAnimationGroup()
         bob:SetLooping("BOUNCE")
-        local sc = bob:CreateAnimation("Scale")
-        sc:SetScaleFrom(1, 1)
-        sc:SetScaleTo(1.05, 1.05)
+        local sc = bob:CreateAnimation("Alpha")
+        sc:SetFromAlpha(0.82)
+        sc:SetToAlpha(1)
         sc:SetDuration(3.2)
         sc:SetSmoothing("IN_OUT")
         bob:Play()
+        coin.bobAG = bob
     end
 
     -- 问候语
@@ -497,6 +502,18 @@ function ns.UI.Build()
             pcall(function() refs.time:SetText(T.FormatDuration(GetTime() - sessionStart)) end)
         end
         pcall(ns.UI.RefreshStats)
+
+        -- 兜底: 金币图标不该有任何缩放。一旦被动画改成别的值(该客户端循环动画会累积
+        -- 增量, 表现为图标持续放大直至铺满屏幕), 立即停掉动画并归位。
+        if refs.coin then
+            pcall(function()
+                local s = refs.coin:GetScale()
+                if s and math.abs(s - 1) > 0.001 then
+                    if refs.coin.bobAG then refs.coin.bobAG:Stop() end
+                    refs.coin:SetScale(1)
+                end
+            end)
+        end
     end)
 
     ns.UI.ApplyPosition()
