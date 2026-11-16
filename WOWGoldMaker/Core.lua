@@ -23,8 +23,7 @@ ns.IsForever     = ClientVersion() >= 16000 and ClientVersion() < 20000
 local DEFAULTS = {
     autoShow   = false,                                   -- 登录后自动呼出
     animations = true,                                    -- 界面动画
-    pos        = { point = "CENTER", relPoint = "CENTER", x = 0, y = 120 },
-    greetIndex = 1,
+    pos        = { point = "CENTER", relPoint = "CENTER", x = 0, y = 0 },
 }
 
 local db
@@ -51,7 +50,7 @@ function ns.Print(msg)
     print(PREFIX, msg)
 end
 
--- 专业入口。RecipeList.lua 在 Core 之后加载, 必须运行时查找。
+-- 专业入口。现在配方列表内嵌在主面板里 (单页), 所以这里只负责切页签 + 呼出面板。
 -- 早期版本 Core 直接调 ns.FAReport (并不存在的名字), 结果是静默无反应 —— 现在缺模块
 -- 或渲染失败都会明确报出来。
 function ns.OpenRecipes(key, mode)
@@ -60,13 +59,13 @@ function ns.OpenRecipes(key, mode)
         ns.Print("|cffff5555未知专业:|r " .. tostring(key))
         return
     end
-    if ns.RecipeList and ns.RecipeList.Open then
-        ns.RecipeList.Open(key, mode)
+    if ns.UI and ns.UI.ShowProf then
+        ns.UI.ShowProf(key, mode)
     elseif ns.Prof.Report then
-        -- 兜底: 列表窗口没加载出来时退回聊天输出
+        -- 兜底: 界面模块没加载出来时退回聊天输出
         ns.Prof.Report(key, mode)
     else
-        ns.Print("|cffff5555专业模块未加载:|r ns.Prof 为 nil, 检查 Professions.lua")
+        ns.Print("|cffff5555界面模块未加载:|r ns.UI.ShowProf 不存在, 检查 UI.lua")
     end
 end
 
@@ -119,7 +118,7 @@ end
 
 function ns.ResetPosition()
     if not db then return end
-    db.pos = { point = "CENTER", relPoint = "CENTER", x = 0, y = 120 }
+    db.pos = { point = "CENTER", relPoint = "CENTER", x = 0, y = 0 }
     if ns.UI and ns.UI.ApplyPosition then
         ns.UI.ApplyPosition()
     end
@@ -189,8 +188,8 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
         print("  |cffe8c25a/wgm hide|r       隐藏主界面")
         print("  |cffe8c25a/wgm reset|r      重置窗口位置")
         print("  |cffe8c25a/wgm config|r     打开游戏内设置页")
-        print("  |cffe8c25a/wgm fa|r         急救清单窗口")
-        print("  |cffe8c25a/wgm cooking|r    烹饪清单窗口")
+        print("  |cffe8c25a/wgm fa|r         主界面切到急救列表")
+        print("  |cffe8c25a/wgm cooking|r    主界面切到烹饪列表")
         print("  |cffe8c25a/wgm prof|r       列出所有专业")
         print("  |cffe8c25a/wgm icons|r      诊断专业/物品图标能否解析")
     else
