@@ -51,19 +51,22 @@ function ns.Print(msg)
     print(PREFIX, msg)
 end
 
--- 急救模块入口。FirstAid.lua 在 Core 之后加载, 所以这里必须运行时查找而不能缓存。
+-- 专业入口。RecipeList.lua 在 Core 之后加载, 必须运行时查找。
 -- 早期版本 Core 直接调 ns.FAReport (并不存在的名字), 结果是静默无反应 —— 现在缺模块
--- 或生成失败都会明确报出来。
-function ns.RunFirstAid(mode)
-    local fa = ns.FirstAid
-    if type(fa) ~= "table" or type(fa.Report) ~= "function" then
-        ns.Print("|cffff5555急救模块未加载:|r ns.FirstAid 为 nil, 检查 FirstAid.lua 是否报错")
+-- 或渲染失败都会明确报出来。
+function ns.OpenRecipes(key, mode)
+    key = key or "first-aid"
+    if not (ns.Prof and ns.Prof.byKey and ns.Prof.byKey[key]) then
+        ns.Print("|cffff5555未知专业:|r " .. tostring(key))
         return
     end
-    local ok, err = pcall(fa.Report, mode)
-    if not ok then
-        ns.Print("|cffff5555急救清单生成失败:|r " .. tostring(err))
-        pcall(geterrorhandler(), "WOWGoldMaker 急救清单生成失败: " .. tostring(err))
+    if ns.RecipeList and ns.RecipeList.Open then
+        ns.RecipeList.Open(key, mode)
+    elseif ns.Prof.Report then
+        -- 兜底: 列表窗口没加载出来时退回聊天输出
+        ns.Prof.Report(key, mode)
+    else
+        ns.Print("|cffff5555专业模块未加载:|r ns.Prof 为 nil, 检查 Professions.lua")
     end
 end
 
@@ -159,9 +162,20 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
         end
     elseif msg == "fa" or msg == "firstaid" or msg == "first-aid"
         or msg == "急救" then
-        ns.RunFirstAid()
+        ns.OpenRecipes("first-aid")
     elseif msg == "fa mats" or msg == "急救材料" then
-        ns.RunFirstAid("mats")
+        ns.OpenRecipes("first-aid", "mats")
+    elseif msg == "cooking" or msg == "烹饪" then
+        ns.OpenRecipes("cooking")
+    elseif msg == "prof" or msg == "专业" then
+        ns.Print("可用专业 (点击主界面专业卡片也能打开):")
+        for _, p in ipairs(ns.Prof.LIST) do
+            print(format("  |cffe8c25a%-10s|r %s", p.key, p.name))
+        end
+        ns.Print("用法: /wgm prof first-aid  |  /wgm prof cooking")
+    elseif msg:match("^prof ") or msg:match("^专业 ") then
+        local key = msg:match("^prof (.+)$") or msg:match("^专业 (.+)$")
+        ns.OpenRecipes(key)
     elseif msg == "help" then
         ns.Print("命令列表:")
         print("  |cffe8c25a/wgm|r            打开 / 关闭主界面")
@@ -169,8 +183,9 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
         print("  |cffe8c25a/wgm hide|r       隐藏主界面")
         print("  |cffe8c25a/wgm reset|r      重置窗口位置")
         print("  |cffe8c25a/wgm config|r     打开游戏内设置页")
-        print("  |cffe8c25a/wgm fa|r         急救可生产清单 + 所需材料")
-        print("  |cffe8c25a/wgm fa mats|r    只看材料汇总")
+        print("  |cffe8c25a/wgm fa|r         急救清单窗口")
+        print("  |cffe8c25a/wgm cooking|r    烹饪清单窗口")
+        print("  |cffe8c25a/wgm prof|r       列出所有专业")
     else
         ns.UI.Toggle()
     end

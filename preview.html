@@ -35,7 +35,7 @@
   .window {
     position: relative;
     width: 440px;
-    height: 268px;
+    height: 356px;
     filter: drop-shadow(0 18px 30px rgba(0,0,0,.55));
     transition: transform .18s ease;
   }
@@ -143,6 +143,75 @@
   .m-copper { color: #b87333; }
   .card.gold .value { color: var(--gold); }
 
+  /* 专业入口 */
+  .prof-label {
+    position: absolute; top: 208px; left: 26px;
+    font-size: 10px; color: var(--faint); letter-spacing: 1px;
+  }
+  .profs { position: absolute; top: 220px; left: 24px; display: flex; gap: 11px; }
+  .prof {
+    width: 126px; height: 48px;
+    background: url("WOWGoldMaker/Media/card.png") center / 100% 100% no-repeat;
+    display: flex; align-items: center; gap: 8px; padding: 0 10px;
+    cursor: pointer; transition: filter .15s;
+  }
+  .prof:hover { filter: brightness(1.75); }
+  .picon {
+    width: 26px; height: 26px; border-radius: 6px; flex: 0 0 26px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; line-height: 1;
+  }
+  .picon.heal { background: linear-gradient(160deg,#7d2b2b,#3d1414); color: #ffd7d7; box-shadow: inset 0 0 0 1px rgba(255,150,150,.35); }
+  .picon.cook { background: linear-gradient(160deg,#7a4a1c,#3a2210); color: #ffe0b0; box-shadow: inset 0 0 0 1px rgba(255,190,110,.35); }
+  .prof .pn { font-size: 13px; font-weight: 600; color: var(--text); }
+  .prof:hover .pn { color: var(--gold-hi, #ffd98a); }
+  .prof .pd { font-size: 9px; color: var(--faint); margin-top: 1px; white-space: nowrap; }
+
+  /* 配方列表窗口 */
+  .recipe-win {
+    position: fixed; inset: 0; z-index: 50;
+    display: none; align-items: center; justify-content: center;
+    background: rgba(6,8,12,.55); backdrop-filter: blur(2px);
+  }
+  .recipe-win.open { display: flex; }
+  .rpanel {
+    position: relative; width: 460px; height: 420px;
+    background: url("WOWGoldMaker/Media/panel-lg.png") center / 100% 100% no-repeat;
+    filter: drop-shadow(0 22px 40px rgba(0,0,0,.6));
+    animation: rIn .18s ease-out;
+  }
+  @keyframes rIn { from { transform: scale(.96); opacity: .4; } to { transform: scale(1); opacity: 1; } }
+  .rhead { position: absolute; top: 20px; left: 26px; right: 26px; display: flex; align-items: center; gap: 12px; }
+  .ricon {
+    width: 32px; height: 32px; border-radius: 7px; flex: 0 0 32px;
+    display: flex; align-items: center; justify-content: center; font-size: 16px;
+  }
+  #rIcon { width: 32px; height: 32px; flex: 0 0 32px; font-size: 16px; }
+  .rtitle { font-size: 17px; font-weight: 700; color: var(--text); }
+  .rsub { font-size: 10px; color: var(--faint); margin-top: 3px; }
+  .rclose {
+    margin-left: auto; width: 20px; height: 20px; border-radius: 6px;
+    background: rgba(255,255,255,.10); border: none; color: var(--muted);
+    cursor: pointer; font-size: 13px; line-height: 1;
+  }
+  .rclose:hover { background: rgba(255,255,255,.22); color: #fff; }
+  .rdivider { position: absolute; top: 64px; left: 26px; right: 26px; height: 1px; background: rgba(255,255,255,.08); }
+  .rscroll {
+    position: absolute; top: 66px; left: 26px; width: 408px; height: 296px;
+    overflow-y: auto; overflow-x: hidden;
+  }
+  .rscroll::-webkit-scrollbar { width: 3px; }
+  .rscroll::-webkit-scrollbar-thumb { background: rgba(232,194,90,.5); border-radius: 2px; }
+  .rscroll::-webkit-scrollbar-track { background: rgba(255,255,255,.05); }
+  .rrow { height: 34px; padding-top: 4px; }
+  .rrow .t { font-size: 12px; color: var(--text); white-space: nowrap; overflow: hidden; }
+  .rrow .m { font-size: 9px; color: var(--faint); padding-left: 6px; margin-top: 3px; white-space: nowrap; overflow: hidden; }
+  .rrow .idx { color: var(--faint); }
+  .rrow .skill { color: #8a929e; }
+  .rfoot { position: absolute; bottom: 12px; left: 26px; right: 26px; display: flex; align-items: center; }
+  .rfoot .gbtn { height: 32px; font-size: 12px; padding: 0 16px; border-radius: 9px; }
+  .rhint { margin-left: auto; font-size: 9px; color: var(--faint); }
+
   /* 底部 */
   .footer-hint {
     position: absolute; bottom: 27px; left: 26px;
@@ -205,7 +274,7 @@
 </head>
 <body>
 
-<h1><b>WOWGOLDMAKER</b> · 无限服插件预览 (v0.1.0)</h1>
+<h1><b>WOWGOLDMAKER</b> · 无限服插件预览 (v0.2.0)</h1>
 
 <div class="window">
   <div class="shadow"></div>
@@ -214,7 +283,7 @@
     <div class="blob teal"></div>
 
     <div class="title">金币工坊</div>
-    <div class="chip">v0.1.0</div>
+    <div class="chip">v0.2.0</div>
     <button class="close" title="关闭"><i class="x x1"></i><i class="x x2"></i></button>
     <div class="divider"></div>
     <div class="accent"></div>
@@ -234,14 +303,45 @@
       <div class="card"><div class="label">在线</div><div class="value" id="sess">00:00</div></div>
     </div>
 
+    <div class="prof-label">专业</div>
+    <div class="profs">
+      <div class="prof" data-key="first-aid">
+        <div class="picon heal">✚</div>
+        <div><div class="pn">急救</div><div class="pd">绷带 · 药膏 · 解毒</div></div>
+      </div>
+      <div class="prof" data-key="cooking">
+        <div class="picon cook">🍖</div>
+        <div><div class="pn">烹饪</div><div class="pd">食物 · 饮料 · 增益</div></div>
+      </div>
+    </div>
+
     <div class="footer-hint">按住拖动 · /wgm 呼出</div>
     <button class="btn secondary">设置</button>
     <button class="btn primary" id="greetBtn">打个招呼</button>
   </div>
 </div>
 
+<div class="recipe-win" id="recipeWin">
+  <div class="rpanel">
+    <div class="rhead">
+      <div class="picon heal" id="rIcon">✚</div>
+      <div>
+        <div class="rtitle" id="rTitle">急救</div>
+        <div class="rsub" id="rSub"></div>
+      </div>
+      <button class="rclose" id="rClose">×</button>
+    </div>
+    <div class="rdivider"></div>
+    <div class="rscroll" id="rScroll"></div>
+    <div class="rfoot">
+      <button class="gbtn" id="rSwitch">材料汇总</button>
+      <span class="rhint">滚轮滚动 · ESC 关闭</span>
+    </div>
+  </div>
+</div>
+
 <div class="settings">
-  <h2><span>金币工坊</span> v0.1.0</h2>
+  <h2><span>金币工坊</span> v0.2.0</h2>
   <div class="sub">魔兽世界无限服 · 金币工具箱 (Hello 骨架)</div>
   <hr>
   <div class="row on" id="row1"><div class="box"><span class="check">✓</span></div><span class="lbl">登录后自动呼出主界面</span></div>
@@ -281,6 +381,115 @@
     const ss = String(s % 60).padStart(2, "0");
     document.getElementById("sess").textContent = mm + ":" + ss;
   }, 1000);
+
+  /* ==================== 专业 / 配方列表 ====================
+     预览页为示例数据 (游戏内由 ProfData.lua 提供完整 32/124 条)。 */
+  const PROF = {
+    "first-aid": {
+      name: "急救", icon: "✚", cls: "heal",
+      rows: [
+        ["亚麻绷带", 1, 1, [["亚麻布", 1]]],
+        ["初级治疗药水", 1, 1, [["空瓶", 1], ["宁神花", 1]]],
+        ["厚亚麻绷带", 1, 40, [["亚麻布", 2]]],
+        ["毛料绷带", 1, 80, [["毛料", 1]]],
+        ["抗毒药剂", 3, 80, [["小毒囊", 1]]],
+        ["次级治疗药水", 1, 110, [["空瓶", 1], ["石南草", 1]]],
+        ["厚毛料绷带", 1, 115, [["毛料", 2]]],
+        ["丝绸绷带", 1, 150, [["丝绸", 1]]],
+        ["厚丝绸绷带", 1, 180, [["丝绸", 2]]],
+        ["魔纹绷带", 1, 210, [["魔纹布", 1]]],
+        ["厚魔纹绷带", 1, 240, [["魔纹布", 2]]],
+        ["符文绷带", 1, 260, [["符文布", 1]]],
+        ["厚符文绷带", 1, 290, [["符文布", 2]]],
+      ],
+    },
+    "cooking": {
+      name: "烹饪", icon: "🍖", cls: "cook",
+      rows: [
+        ["香料面包", 1, 1, [["简单面粉", 1], ["空瓶", 1]]],
+        ["烤野猪排", 1, 1, [["野猪肋排", 1]]],
+        ["熏熊肉", 1, 1, [["熊肉", 1]]],
+        ["香脆蜘蛛肉", 1, 40, [["粘稠的蜘蛛肉", 1]]],
+        ["长嘴泥鳅", 1, 50, [["新鲜的长嘴泥鳅", 1]]],
+        ["美味小鱼", 1, 50, [["新鲜的美味小鱼", 1]]],
+        ["蟹肉蛋糕", 1, 75, [["新鲜的蟹肉", 1]]],
+        ["烤迅猛龙肉", 1, 100, [["迅猛龙肉", 1]]],
+        ["炖龙虾", 1, 150, [["龙虾", 1]]],
+        ["白鳞鲑鱼", 1, 175, [["新鲜的白鳞鲑鱼", 1]]],
+        ["夜鳞鱼汤", 1, 225, [["新鲜的夜鳞鲷鱼", 1]]],
+        ["水煮阳鳞鲑鱼", 1, 250, [["新鲜的阳鳞鲑鱼", 1]]],
+      ],
+    },
+  };
+
+  let curKey = "first-aid", curMode = "list";
+  const rWin = document.getElementById("recipeWin");
+  const rScroll = document.getElementById("rScroll");
+  const rSwitch = document.getElementById("rSwitch");
+
+  function summarize(rows) {
+    const agg = new Map();
+    for (const [, , , mats] of rows) {
+      for (const [n, c] of mats) agg.set(n, (agg.get(n) || 0) + c);
+    }
+    return [...agg.entries()].sort((a, b) => b[1] - a[1]);
+  }
+
+  function matsText(mats) {
+    return mats.map(([n, c]) => `${n}<span style="color:#fff">×${c}</span>`).join("&nbsp;&nbsp;");
+  }
+
+  function renderRecipes() {
+    const p = PROF[curKey];
+    const icon = document.getElementById("rIcon");
+    icon.className = "picon " + p.cls;
+    icon.textContent = p.icon;
+    document.getElementById("rTitle").textContent = p.name;
+
+    let html = "";
+    if (curMode === "list") {
+      document.getElementById("rSub").textContent = `${p.rows.length} 条配方 · 按技能等级排序`;
+      p.rows.forEach(([n, made, req, mats], i) => {
+        const idx = String(i + 1).padStart(2, " ");
+        const md = made > 1 ? ` <span style="color:#9d9d9d">×${made}</span>` : "";
+        html += `<div class="rrow">
+          <div class="t"><span class="idx">${idx}.</span>&nbsp; ${n}${md} &nbsp; <span class="skill">[${req}]</span></div>
+          <div class="m">${matsText(mats)}</div>
+        </div>`;
+      });
+    } else {
+      const agg = summarize(p.rows);
+      document.getElementById("rSub").textContent = `${agg.length} 种材料 · 按总用量排序`;
+      agg.forEach(([n, c], i) => {
+        const idx = String(i + 1).padStart(2, " ");
+        html += `<div class="rrow">
+          <div class="t"><span class="idx">${idx}.</span>&nbsp; ${n} &nbsp; <span style="color:#fff">×${c}</span></div>
+        </div>`;
+      });
+    }
+    rScroll.innerHTML = html;
+    rScroll.scrollTop = 0;
+    rSwitch.textContent = curMode === "list" ? "材料汇总" : "配方列表";
+  }
+
+  document.querySelectorAll(".prof").forEach(el => {
+    el.onclick = () => {
+      curKey = el.dataset.key;
+      curMode = "list";
+      renderRecipes();
+      rWin.classList.add("open");
+    };
+  });
+  rSwitch.onclick = () => {
+    curMode = curMode === "list" ? "mats" : "list";
+    renderRecipes();
+  };
+  document.getElementById("rClose").onclick = () => rWin.classList.remove("open");
+  rWin.onclick = e => { if (e.target === rWin) rWin.classList.remove("open"); };
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape") rWin.classList.remove("open");
+  });
+
 </script>
 </body>
 </html>

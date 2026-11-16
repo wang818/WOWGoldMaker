@@ -10,7 +10,7 @@ local C = T.C
 
 ns.UI = ns.UI or {}
 
-local W, H = 440, 268
+local W, H = 440, 356
 
 local frame
 local refs = {}          -- 需要跨函数更新的控件
@@ -373,6 +373,53 @@ local function BuildCards(f)
     refs.gold, refs.level, refs.time = cards.gold, cards.level, cards.time
 end
 
+--------------------------------------------------------------------------- 专业入口
+
+-- 每个专业一张可点卡片, 点击后打开该专业的可生产列表窗口。
+-- 专业清单来自 ns.Prof.LIST, 加专业只需在那里加一行 (数据见 ProfData.lua)。
+local PROF_CARD_W, PROF_CARD_H = 126, 48
+
+local function BuildProfessions(f)
+    local label = T.Text(f, 10, C.faint)
+    label:SetPoint("TOPLEFT", f, "TOPLEFT", 26, -212)
+    label:SetText("专业")
+
+    local list = (ns.Prof and ns.Prof.LIST) or {}
+
+    for i, prof in ipairs(list) do
+        local card = T.Glass(f, PROF_CARD_W, PROF_CARD_H, "card")
+        card:SetPoint("TOPLEFT", f, "TOPLEFT", 24 + (i - 1) * 137, -226)
+        card:EnableMouse(true)
+
+        local icon = card:CreateTexture(nil, "ARTWORK")
+        icon:SetSize(26, 26)
+        icon:SetPoint("LEFT", card, "LEFT", 9, 0)
+        icon:SetTexture(prof.icon)
+
+        local name = T.Text(card, 13, C.text)
+        name:SetPoint("TOPLEFT", icon, "TOPRIGHT", 7, 5)
+        name:SetText(prof.name)
+
+        local note = T.Text(card, 9, C.faint)
+        note:SetPoint("TOPLEFT", icon, "TOPRIGHT", 7, -8)
+        note:SetText(prof.note or "")
+
+        card:SetScript("OnEnter", function(s)
+            s.bg:SetVertexColor(1, 1, 1, 0.10)
+            name:SetTextColor(T.rgb(C.goldHi))
+        end)
+        card:SetScript("OnLeave", function(s)
+            s.bg:SetVertexColor(1, 1, 1, 1)
+            name:SetTextColor(T.rgb(C.text))
+        end)
+        card:SetScript("OnMouseUp", function()
+            if ns.OpenRecipes then
+                ns.OpenRecipes(prof.key)
+            end
+        end)
+    end
+end
+
 local function BuildFooter(f)
     local db = ns.DB()
 
@@ -490,6 +537,7 @@ function ns.UI.Build()
     SafeStep(BuildHeader, "Header", f)
     SafeStep(BuildHero, "Hero", f)
     SafeStep(BuildCards, "Cards", f)
+    SafeStep(BuildProfessions, "Professions", f)
     SafeStep(BuildFooter, "Footer", f)
     SafeStep(BuildShowAnimations, "Animations", f)
 

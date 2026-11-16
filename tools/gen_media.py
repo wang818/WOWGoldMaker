@@ -179,6 +179,10 @@ def main():
     make_panel(os.path.join(MEDIA, "panel"), 512, 312, 19,
                (27, 30, 41), (10, 11, 16), border_alpha=0.11, highlight=0.09)
 
+    # 配方列表大面板 460x420 -> 536x490 (同比例, 避免拉伸把圆角拉变形)
+    make_panel(os.path.join(MEDIA, "panel-lg"), 536, 490, 20,
+               (27, 30, 41), (10, 11, 16), border_alpha=0.11, highlight=0.09)
+
     # 投影
     make_shadow(os.path.join(MEDIA, "shadow"), 512, 328, 26, 15.0, 0.62)
 
