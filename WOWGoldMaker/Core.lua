@@ -9,8 +9,11 @@ ns.ADDON   = ADDON
 ns.VERSION = "0.1.0"
 
 local function ClientVersion()
-    local ok, _, _, v = pcall(GetBuildInfo)
-    return ok and v or 0
+    -- 兼容处理: 部分客户端 (含无限服) 第 4 个返回值可能是字符串, 统一 tonumber
+    local ok, v = pcall(function()
+        return select(4, GetBuildInfo())
+    end)
+    return (ok and tonumber(v)) or 0
 end
 ns.ClientVersion = ClientVersion
 ns.IsForever     = ClientVersion() >= 16000 and ClientVersion() < 20000
@@ -65,7 +68,11 @@ ev:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
         db = WOWGoldMakerDB
 
         if ns.BuildSettings then
-            pcall(ns.BuildSettings)
+            local ok, err = pcall(ns.BuildSettings)
+            if not ok then
+                ns.Print("|cffff5555设置页注册失败:|r " .. tostring(err))
+                pcall(geterrorhandler(), "WOWGoldMaker 设置页注册失败: " .. tostring(err))
+            end
         end
 
     elseif event == "PLAYER_ENTERING_WORLD" then
@@ -117,6 +124,23 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
         ns.UI.Show()
     elseif msg == "config" or msg == "settings" then
         ns.OpenSettings()
+    elseif msg == "debug" then
+        if ns.UI and ns.UI.DebugInfo then
+            ns.UI.DebugInfo()
+        end
+    elseif msg == "stats" then
+        -- 强制刷新一次并打印解析结果
+        if ns.UI and ns.UI.RefreshStats then
+            ns.UI.RefreshStats()
+            local s = ns.UI.lastStats
+            if s then
+                print("|cffe8c25a[WGM 数据]|r 铜=" .. tostring(s.money)
+                    .. " → " .. tostring(s.gold) .. "金" .. tostring(s.silver) .. "银"
+                    .. tostring(s.copper) .. "铜 | 等级=" .. tostring(s.level))
+            else
+                print("|cffff5555[WGM 数据]|r 刷新未产生数据, 输 /wgm debug 看详情")
+            end
+        end
     elseif msg == "help" then
         ns.Print("命令列表:")
         print("  |cffe8c25a/wgm|r            打开 / 关闭主界面")

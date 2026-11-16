@@ -90,6 +90,8 @@ function ns.BuildSettings()
     local ok, cat = pcall(Settings.RegisterCanvasLayoutCategory, panel, "金币工坊")
     if ok and cat then
         pcall(Settings.RegisterAddOnCategory, cat)
-        categoryID = cat
+        -- OpenToCategory 需要的是数字 ID, 不是类目对象
+        local okID, id = pcall(function() return cat:GetID() end)
+        categoryID = okID and id or nil
     end
 end

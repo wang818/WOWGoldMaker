@@ -8,11 +8,14 @@ local ADDON, ns = ...
 local T = ns.T
 local C = T.C
 
+ns.UI = ns.UI or {}
+
 local W, H = 440, 268
 
 local frame
 local refs = {}          -- 需要跨函数更新的控件
 local sessionStart
+local selfCheckDone
 local SIGNOFFS = {
     "愿你的背包永不爆满。",
     "今天的拍卖行是你的舞台。",
@@ -56,10 +59,114 @@ local function UpdateSignoff()
     refs.signoff:SetText(SIGNOFFS[((db.greetIndex - 1) % #SIGNOFFS) + 1])
 end
 
+-- 取玩家等级: 这个客户端的 UnitLevel 可能缺失或返回 nil, 逐级回退
+local function PlayerLevel()
+    if type(UnitLevel) == "function" then
+        local ok, v = pcall(UnitLevel, "player")
+        if ok and type(v) == "number" and v > 0 then return v end
+    end
+    if type(UnitEffectiveLevel) == "function" then
+        local ok, v = pcall(UnitEffectiveLevel, "player")
+        if ok and type(v) == "number" and v > 0 then return v end
+    end
+    return nil
+end
+
+-- 取背包金币(铜), 失败返回 0
+local function PlayerMoney()
+    if type(GetMoney) ~= "function" then return 0 end
+    local ok, v = pcall(GetMoney)
+    if ok and type(v) == "number" then return v end
+    return 0
+end
+
+-- 写文本并暴露错误: 同一错误只提示一次, 避免刷屏
+local lastErr = {}
+local function SetText(fs, txt, tag)
+    if not fs then
+        if lastErr[tag] ~= "nil" then
+            lastErr[tag] = "nil"
+            ns.Print("|cffff5555[" .. tag .. "] 控件不存在|r")
+        end
+        return false
+    end
+    local ok, err = pcall(fs.SetText, fs, txt)
+    if not ok then
+        local msg = tostring(err)
+        if lastErr[tag] ~= msg then
+            lastErr[tag] = msg
+            ns.Print("|cffff5555[" .. tag .. "] 写入失败: " .. msg .. "|r")
+            pcall(geterrorhandler(), "WOWGoldMaker [" .. tag .. "] " .. msg)
+        end
+        return false
+    end
+    lastErr[tag] = nil
+    return true
+end
+
 function ns.UI.RefreshStats()
-    if not refs.gold then return end
-    refs.gold:SetText(T.ShortGold(GetMoney()))
-    refs.level:SetText(tostring(UnitLevel("player") or "--"))
+    if not refs.gold then
+        if lastErr.build ~= "nocards" then
+            lastErr.build = "nocards"
+            ns.Print("|cffff5555金币卡片未创建 (refs.gold = nil)|r")
+        end
+        return
+    end
+    lastErr.build = nil
+
+    local money = PlayerMoney()
+    local gold   = math.floor(money / 10000)
+    local silver = math.floor((money % 10000) / 100)
+    local copper = money % 100
+
+    -- 金额: ShortGold 失败则退回纯数字, 不让一处出错吞掉整张卡
+    local okS, goldText = pcall(T.ShortGold, money)
+    if not okS or type(goldText) ~= "string" then
+        goldText = tostring(gold)
+    end
+
+    SetText(refs.gold, goldText, "gold")
+    if refs.goldSub then
+        SetText(refs.goldSub, silver > 0 and format("%d银 %d铜", silver, copper)
+            or format("%d铜", copper), "goldSub")
+    end
+
+    local lvl = PlayerLevel()
+    SetText(refs.level, lvl and tostring(lvl) or "?", "level")
+
+    -- 供 /wgm debug 使用
+    ns.UI.lastStats = {
+        money = money, gold = gold, silver = silver, copper = copper,
+        level = lvl, goldText = goldText,
+    }
+end
+
+-- /wgm debug: 打印内部状态
+function ns.UI.DebugInfo()
+    print("|cffe8c25a[WGM 调试]|r")
+    print("  refs.gold:", tostring(refs.gold), "| greeting:", tostring(refs.greeting))
+    print("  frame:", tostring(frame ~= nil), "| showAG:", tostring(frame and frame.showAG ~= nil))
+    print("  db:", tostring(ns.DB() ~= nil))
+    local okM, money = pcall(GetMoney)
+    print("  GetMoney 存在:", tostring(type(GetMoney) == "function"), "| 调用:", tostring(okM), "=", tostring(money))
+    local okL, lvl = pcall(UnitLevel, "player")
+    print("  UnitLevel:", tostring(okL), "=", tostring(lvl), "| PlayerLevel():", tostring(PlayerLevel()))
+    -- 控件上真实的文本, 区分「没写进去」和「写进去但看不见」
+    for _, k in ipairs({ "gold", "goldSub", "level", "time" }) do
+        local fs = refs[k]
+        local txt = "nil"
+        if fs then local ok2, t = pcall(fs.GetText, fs); txt = ok2 and tostring(t) or "ERR" end
+        print("  " .. k .. ".text:", txt)
+    end
+    -- 最近一次刷新解析出的原始数据
+    local s = ns.UI.lastStats
+    if s then
+        print("  lastStats: money=" .. tostring(s.money) .. " 金=" .. tostring(s.gold)
+            .. " 银=" .. tostring(s.silver) .. " 铜=" .. tostring(s.copper)
+            .. " 等级=" .. tostring(s.level) .. " 文本=" .. tostring(s.goldText))
+    else
+        print("  lastStats: nil (刷新函数从未成功执行)")
+    end
 end
 
 --------------------------------------------------------------------------- 动画
@@ -70,13 +177,13 @@ local function PlayPop(region)
     if not ag then
         ag = region:CreateAnimationGroup()
         local up = ag:CreateAnimation("Scale")
-        up:SetFromScale(1, 1)
-        up:SetToScale(1.05, 1.05)
+        up:SetScaleFrom(1, 1)
+        up:SetScaleTo(1.05, 1.05)
         up:SetDuration(0.10)
         up:SetOrder(1)
         local down = ag:CreateAnimation("Scale")
-        down:SetFromScale(1.05, 1.05)
-        down:SetToScale(1, 1)
+        down:SetScaleFrom(1.05, 1.05)
+        down:SetScaleTo(1, 1)
         down:SetDuration(0.22)
         down:SetSmoothing("OUT")
         down:SetOrder(2)
@@ -106,6 +213,16 @@ local function FlashGlow(glow)
 end
 
 --------------------------------------------------------------------------- 构建
+
+-- 分步构建: 单步失败提示到聊天框, 并转发给客户端错误处理器写入 General.log ([E][Lua])
+local function SafeStep(fn, name, ...)
+    local ok, err = pcall(fn, ...)
+    if not ok then
+        local msg = "WOWGoldMaker 构建 " .. name .. " 失败: " .. tostring(err)
+        ns.Print("|cffff5555构建 " .. name .. " 失败:|r " .. tostring(err))
+        pcall(geterrorhandler(), msg)
+    end
+end
 
 local function BuildHeader(f)
     -- 标题
@@ -141,7 +258,7 @@ local function BuildHeader(f)
         local tr = ag:CreateAnimation("Translation")
         tr:SetOffset(W - 48 - 52, 0)
         tr:SetDuration(6.5)
-        tr:SetSmoothing("BOTH")
+        tr:SetSmoothing("IN_OUT")
         ag:Play()
     end
 end
@@ -164,7 +281,7 @@ local function BuildHero(f)
         a:SetFromAlpha(0.10)
         a:SetToAlpha(0.24)
         a:SetDuration(2.8)
-        a:SetSmoothing("BOTH")
+        a:SetSmoothing("IN_OUT")
         ag:Play()
 
         -- 图标轻微上下浮动
@@ -173,7 +290,7 @@ local function BuildHero(f)
         local t = bob:CreateAnimation("Translation")
         t:SetOffset(0, 4)
         t:SetDuration(3.2)
-        t:SetSmoothing("BOTH")
+        t:SetSmoothing("IN_OUT")
         bob:Play()
     end
 
@@ -204,7 +321,7 @@ local function BuildCards(f)
 
     local cards = {}
     for i, def in ipairs(defs) do
-        local card = T.Glass(f, 126, 58, "card")
+        local card = T.Glass(f, 126, 64, "card")
         card:SetPoint("TOPLEFT", f, "TOPLEFT", 24 + (i - 1) * 137, -136)
 
         local label = T.Text(card, 10, C.faint)
@@ -212,24 +329,22 @@ local function BuildCards(f)
         label:SetText(def.title)
 
         local value = T.Text(card, 17, def.color)
-        value:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 12, 10)
-        value:SetText("--")
+        value:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 12, 20)
+        value:SetText("读取中")   -- 占位: 若一直显示这个, 说明刷新从未执行
+
+        -- 金币卡片额外一行金银铜明细, 免去悬浮框
+        if def.key == "gold" then
+            local sub = T.Text(card, 9, C.faint)
+            sub:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 12, 8)
+            sub:SetText("")
+            refs.goldSub = sub
+        end
 
         card:SetScript("OnEnter", function(s)
             s.bg:SetVertexColor(1, 1, 1, 0.10)
-            if def.key == "gold" then
-                local g = math.floor(GetMoney() / 10000)
-                GameTooltip:SetOwner(s, "ANCHOR_RIGHT")
-                GameTooltip:AddLine("背包与银行金币", 0.9, 0.78, 0.42)
-                GameTooltip:AddLine(format("%d金 %d银 %d铜",
-                    g, math.floor(GetMoney() % 10000 / 100), GetMoney() % 100),
-                    1, 1, 1)
-                GameTooltip:Show()
-            end
         end)
         card:SetScript("OnLeave", function(s)
             s.bg:SetVertexColor(1, 1, 1, 1)
-            GameTooltip:Hide()
         end)
 
         cards[def.key] = value
@@ -271,8 +386,8 @@ local function BuildShowAnimations(f)
     a:SetDuration(0.18)
     a:SetSmoothing("OUT")
     local s = showAG:CreateAnimation("Scale")
-    s:SetFromScale(0.96, 0.96)
-    s:SetToScale(1, 1)
+    s:SetScaleFrom(0.96, 0.96)
+    s:SetScaleTo(1, 1)
     s:SetDuration(0.18)
     s:SetSmoothing("OUT")
     f.showAG = showAG
@@ -284,8 +399,8 @@ local function BuildShowAnimations(f)
     ha:SetDuration(0.14)
     ha:SetSmoothing("IN")
     local hs = hideAG:CreateAnimation("Scale")
-    hs:SetFromScale(1, 1)
-    hs:SetToScale(0.97, 0.97)
+    hs:SetScaleFrom(1, 1)
+    hs:SetScaleTo(0.97, 0.97)
     hs:SetDuration(0.14)
     hs:SetSmoothing("IN")
     hideAG:SetScript("OnFinished", function()
@@ -313,19 +428,13 @@ function ns.UI.Build()
         ns.SavePosition(s)
     end)
     f:SetScript("OnShow", function()
-        UpdateGreeting()
-        UpdateSignoff()
-        ns.UI.RefreshStats()
+        SafeStep(UpdateGreeting, "UpdateGreeting")
+        SafeStep(UpdateSignoff, "UpdateSignoff")
+        SafeStep(ns.UI.RefreshStats, "RefreshStats")
     end)
     tinsert(UISpecialFrames, f:GetName())   -- ESC 关闭
     frame = f
     ns.frame = f
-
-    -- 投影 (面板贴图之下)
-    local shadow = f:CreateTexture(nil, "BACKGROUND", nil, -8)
-    shadow:SetTexture(T.PATH .. "shadow")
-    shadow:SetSize(486, 312)
-    shadow:SetPoint("CENTER", 0, -6)
 
     -- 面板
     local bg = f:CreateTexture(nil, "BACKGROUND", nil, -7)
@@ -343,33 +452,53 @@ function ns.UI.Build()
         local trA = agA:CreateAnimation("Translation")
         trA:SetOffset(30, 12)
         trA:SetDuration(7)
-        trA:SetSmoothing("BOTH")
+        trA:SetSmoothing("IN_OUT")
         agA:Play()
         local agB = glowB:CreateAnimationGroup()
         agB:SetLooping("BOUNCE")
         local trB = agB:CreateAnimation("Translation")
         trB:SetOffset(-26, -10)
         trB:SetDuration(8)
-        trB:SetSmoothing("BOTH")
+        trB:SetSmoothing("IN_OUT")
         agB:Play()
     end
 
-    BuildHeader(f)
-    BuildHero(f)
-    BuildCards(f)
-    BuildFooter(f)
-    BuildShowAnimations(f)
+    SafeStep(BuildHeader, "Header", f)
+    SafeStep(BuildHero, "Hero", f)
+    SafeStep(BuildCards, "Cards", f)
+    SafeStep(BuildFooter, "Footer", f)
+    SafeStep(BuildShowAnimations, "Animations", f)
 
     sessionStart = GetTime()
 
-    -- 在线时长每秒刷新
+    -- 每秒刷新: 在线时长 + 金币/等级 (不依赖 Show() 路径, 保证数据一定被写入)
     C_Timer.NewTicker(1, function()
-        if frame and frame:IsShown() and refs.time then
-            refs.time:SetText(T.FormatDuration(GetTime() - sessionStart))
+        if not (frame and frame:IsShown()) then return end
+        if refs.time then
+            pcall(function() refs.time:SetText(T.FormatDuration(GetTime() - sessionStart)) end)
         end
+        pcall(ns.UI.RefreshStats)
     end)
 
     ns.UI.ApplyPosition()
+
+    -- 一次性自检: 构建后 2 秒把真实状态打到聊天框, 省得再去查
+    C_Timer.After(2, function()
+        if selfCheckDone then return end
+        selfCheckDone = true
+        local s = ns.UI.lastStats
+        local function txt(k)
+            local fs = refs[k]
+            if not fs then return "无控件" end
+            local ok, t = pcall(fs.GetText, fs)
+            return ok and tostring(t) or "读取失败"
+        end
+        ns.Print(format("自检 · 卡片=%s 刷新=%s | 金币文本=%s 等级文本=%s",
+            refs.gold and "已创建" or "缺失",
+            s and "已执行" or "未执行",
+            txt("gold"), txt("level")))
+    end)
+
     return f
 end
 
@@ -383,11 +512,12 @@ end
 
 function ns.UI.Show()
     if not frame then return end
-    ns.UI.ApplyPosition()
-    UpdateGreeting()
-    UpdateSignoff()
-    ns.UI.RefreshStats()
-    if ns.DB().animations and frame.showAG and not frame:IsShown() then
+    SafeStep(function() ns.UI.ApplyPosition() end, "ApplyPosition")
+    SafeStep(UpdateGreeting, "UpdateGreeting")
+    SafeStep(UpdateSignoff, "UpdateSignoff")
+    SafeStep(ns.UI.RefreshStats, "RefreshStats")
+    local animOK, animations = pcall(function() return ns.DB().animations end)
+    if animations and frame.showAG and not frame:IsShown() then
         frame:Show()
         frame.showAG:Play()
     else

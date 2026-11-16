@@ -24,13 +24,16 @@ T.C = {
     ink     = { 0.13, 0.11, 0.06 },   -- 金色底上的深色文字
     green   = { 0.40, 0.80, 0.45 },
     red     = { 0.92, 0.42, 0.42 },
+    white   = { 1.00, 1.00, 1.00 },
 }
 
 function T.rgb(c, a)
+    if type(c) ~= "table" then c = T.C.white end
     return c[1], c[2], c[3], a or c[4] or 1
 end
 
 function T.hex(c)
+    if type(c) ~= "table" then c = T.C.white end
     return format("%02x%02x%02x", c[1] * 255, c[2] * 255, c[3] * 255)
 end
 
