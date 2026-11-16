@@ -104,6 +104,29 @@ local function SetText(fs, txt, tag)
     return true
 end
 
+-- 货币配色: 金=亮黄, 银=银白, 铜=古铜
+local MONEY_C = {
+    gold   = "|cffffd100",
+    silver = "|cffe6edf5",
+    copper = "|cffb87333",
+}
+
+local function Comma(n)
+    local s = tostring(math.floor(n or 0))
+    local rev = s:reverse():gsub("(%d%d%d)", "%1,")
+    return (rev:reverse():gsub("^,", ""))
+end
+
+-- 一行显示: 1,234金 56银 78铜 (三段各自配色)
+local function MoneyLine(money)
+    local g = math.floor(money / 10000)
+    local s = math.floor((money % 10000) / 100)
+    local c = money % 100
+    local gText = g >= 100000 and format("%.1f万", g / 10000) or Comma(g)
+    return format("%s%s|r|cffffffff金|r %s%d|r|cffffffff银|r %s%d|r|cffffffff铜|r",
+        MONEY_C.gold, gText, MONEY_C.silver, s, MONEY_C.copper, c)
+end
+
 function ns.UI.RefreshStats()
     if not refs.gold then
         if lastErr.build ~= "nocards" then
@@ -119,17 +142,13 @@ function ns.UI.RefreshStats()
     local silver = math.floor((money % 10000) / 100)
     local copper = money % 100
 
-    -- 金额: ShortGold 失败则退回纯数字, 不让一处出错吞掉整张卡
-    local okS, goldText = pcall(T.ShortGold, money)
+    -- 金额: 格式化失败则退回纯数字, 不让一处出错吞掉整张卡
+    local okS, goldText = pcall(MoneyLine, money)
     if not okS or type(goldText) ~= "string" then
         goldText = tostring(gold)
     end
 
     SetText(refs.gold, goldText, "gold")
-    if refs.goldSub then
-        SetText(refs.goldSub, silver > 0 and format("%d银 %d铜", silver, copper)
-            or format("%d铜", copper), "goldSub")
-    end
 
     local lvl = PlayerLevel()
     SetText(refs.level, lvl and tostring(lvl) or "?", "level")
@@ -152,7 +171,7 @@ function ns.UI.DebugInfo()
     local okL, lvl = pcall(UnitLevel, "player")
     print("  UnitLevel:", tostring(okL), "=", tostring(lvl), "| PlayerLevel():", tostring(PlayerLevel()))
     -- 控件上真实的文本, 区分「没写进去」和「写进去但看不见」
-    for _, k in ipairs({ "gold", "goldSub", "level", "time" }) do
+    for _, k in ipairs({ "gold", "level", "time" }) do
         local fs = refs[k]
         local txt = "nil"
         if fs then local ok2, t = pcall(fs.GetText, fs); txt = ok2 and tostring(t) or "ERR" end
@@ -321,24 +340,17 @@ local function BuildCards(f)
 
     local cards = {}
     for i, def in ipairs(defs) do
-        local card = T.Glass(f, 126, 64, "card")
+        local card = T.Glass(f, 126, 58, "card")
         card:SetPoint("TOPLEFT", f, "TOPLEFT", 24 + (i - 1) * 137, -136)
 
         local label = T.Text(card, 10, C.faint)
         label:SetPoint("TOPLEFT", card, "TOPLEFT", 12, -9)
         label:SetText(def.title)
 
-        local value = T.Text(card, 17, def.color)
-        value:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 12, 20)
-        value:SetText("读取中")   -- 占位: 若一直显示这个, 说明刷新从未执行
-
-        -- 金币卡片额外一行金银铜明细, 免去悬浮框
-        if def.key == "gold" then
-            local sub = T.Text(card, 9, C.faint)
-            sub:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 12, 8)
-            sub:SetText("")
-            refs.goldSub = sub
-        end
+        -- 金币一行放金银铜三段, 字体略小; 其余卡片单值
+        local value = T.Text(card, def.key == "gold" and 11 or 17, def.color)
+        value:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 11, def.key == "gold" and 11 or 10)
+        value:SetText(def.key == "gold" and "读取中" or "--")
 
         card:SetScript("OnEnter", function(s)
             s.bg:SetVertexColor(1, 1, 1, 0.10)

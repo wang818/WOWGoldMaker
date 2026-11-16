@@ -128,16 +128,19 @@
   /* 数据卡片 */
   .cards { position: absolute; top: 136px; left: 24px; display: flex; gap: 11px; }
   .card {
-    width: 126px; height: 64px;
+    width: 126px; height: 58px;
     background: url("WOWGoldMaker/Media/card.png") center / 100% 100% no-repeat;
-    padding: 9px 12px 8px;
+    padding: 9px 11px 10px;
     cursor: default;
     transition: filter .15s;
   }
   .card:hover { filter: brightness(1.7); }
   .card .label { font-size: 10px; color: var(--faint); letter-spacing: 1px; }
-  .card .value { margin-top: 4px; font-size: 17px; font-weight: 700; color: var(--text); line-height: 1.15; }
-  .card .sub { margin-top: 1px; font-size: 9px; color: var(--faint); letter-spacing: .3px; }
+  .card .value { margin-top: 7px; font-size: 17px; font-weight: 700; color: var(--text); }
+  .card.gold .value { color: #fff; font-size: 11px; font-weight: 700; letter-spacing: .3px; white-space: nowrap; }
+  .m-gold { color: #ffd100; }
+  .m-silver { color: #e6edf5; }
+  .m-copper { color: #b87333; }
   .card.gold .value { color: var(--gold); }
 
   /* 底部 */
@@ -226,7 +229,7 @@
     </div>
 
     <div class="cards">
-      <div class="card gold"><div class="label">金币</div><div class="value">12,345</div><div class="sub">67银 89铜</div></div>
+      <div class="card gold"><div class="label">金币</div><div class="value"><span class="m-gold">12,345</span>金 <span class="m-silver">67</span>银 <span class="m-copper">89</span>铜</div></div>
       <div class="card"><div class="label">等级</div><div class="value">60</div></div>
       <div class="card"><div class="label">在线</div><div class="value" id="sess">00:00</div></div>
     </div>
