@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WOWGoldMaker · 主界面预览</title>
+<style>
+  :root {
+    --gold: #e8c25a;
+    --gold-hi: #ffde85;
+    --gold-lo: #b8933f;
+    --teal: #4ac7a8;
+    --text: #eceef2;
+    --muted: #949ba6;
+    --faint: #666c78;
+    --ink: #211b0f;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    min-height: 100vh;
+    background: radial-gradient(1200px 600px at 50% -10%, #23262f 0%, #14151a 55%, #0c0d11 100%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 44px;
+    padding: 60px 20px 80px;
+    font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+    color: var(--text);
+    user-select: none;
+  }
+  h1 { font-size: 15px; font-weight: 600; color: var(--faint); letter-spacing: 2px; }
+  h1 b { color: var(--gold); font-weight: 700; }
+
+  /* ---------- 主窗口 ---------- */
+  .window {
+    position: relative;
+    width: 440px;
+    height: 268px;
+    filter: drop-shadow(0 18px 30px rgba(0,0,0,.55));
+    transition: transform .18s ease;
+  }
+  .window .shadow {
+    position: absolute; inset: -22px -23px -22px -23px;
+    background: url("WOWGoldMaker/Media/shadow.png") center / 100% 100% no-repeat;
+    transform: translateY(-4px);
+  }
+  .window .panel {
+    position: absolute; inset: 0;
+    background: url("WOWGoldMaker/Media/panel.png") center / 100% 100% no-repeat;
+    overflow: hidden;
+  }
+
+  /* 氛围光斑 */
+  .blob { position: absolute; pointer-events: none; mix-blend-mode: screen; }
+  .blob.gold {
+    width: 250px; height: 250px; top: -45px; left: 25px; opacity: .07;
+    background: radial-gradient(circle, #e8c25a 0%, transparent 65%);
+    animation: driftA 7s ease-in-out infinite alternate;
+  }
+  .blob.teal {
+    width: 230px; height: 230px; bottom: -45px; right: 20px; opacity: .06;
+    background: radial-gradient(circle, #4ac7a8 0%, transparent 65%);
+    animation: driftB 8s ease-in-out infinite alternate;
+  }
+  @keyframes driftA { from { transform: translate(0,0); } to { transform: translate(30px,12px); } }
+  @keyframes driftB { from { transform: translate(0,0); } to { transform: translate(-26px,-10px); } }
+
+  /* 头部 */
+  .header { position: absolute; top: 0; left: 0; right: 0; }
+  .title {
+    position: absolute; top: 12px; left: 24px;
+    font-size: 17px; font-weight: 700; color: var(--gold); letter-spacing: 1px;
+  }
+  .chip {
+    position: absolute; top: 14px; left: 118px;
+    background: rgba(255,255,255,.10);
+    border: 1px solid rgba(255,255,255,.14);
+    border-radius: 9px; padding: 2px 9px;
+    font-size: 10px; color: var(--muted); letter-spacing: .5px;
+  }
+  .close {
+    position: absolute; top: 10px; right: 12px;
+    width: 24px; height: 24px; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; background: transparent; border: none;
+    transition: background .15s;
+  }
+  .close:hover { background: rgba(255,255,255,.14); }
+  .close:hover .x { background: var(--text); }
+  .close .x { position: absolute; width: 11px; height: 1.6px; background: var(--muted); transition: background .15s; }
+  .close .x1 { transform: rotate(45deg); }
+  .close .x2 { transform: rotate(-45deg); }
+
+  .divider {
+    position: absolute; top: 52px; left: 24px; right: 24px; height: 1px;
+    background: rgba(255,255,255,.08);
+  }
+  .accent {
+    position: absolute; top: 51px; left: 24px; width: 52px; height: 2px;
+    background: var(--gold); opacity: .85; border-radius: 1px;
+    animation: scan 6.5s ease-in-out infinite alternate;
+  }
+  @keyframes scan { from { transform: translateX(0); } to { transform: translateX(340px); } }
+
+  /* Hero */
+  .coin-wrap { position: absolute; top: 24px; left: 26px; width: 44px; height: 44px; }
+  .coin-glow {
+    position: absolute; inset: -26px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(232,194,90,.55) 0%, transparent 62%);
+    animation: breathe 2.8s ease-in-out infinite alternate;
+  }
+  @keyframes breathe { from { opacity: .35; } to { opacity: .85; } }
+  .coin {
+    position: absolute; inset: 0; border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, #ffe9a8 0%, #e8c25a 45%, #a8842f 100%);
+    box-shadow: inset 0 0 0 3px rgba(120,88,20,.55), 0 2px 8px rgba(0,0,0,.5);
+    display: flex; align-items: center; justify-content: center;
+    animation: bob 3.2s ease-in-out infinite alternate;
+  }
+  .coin span { font-size: 20px; font-weight: 800; color: #7a5c18; text-shadow: 0 1px 0 rgba(255,235,170,.7); }
+  @keyframes bob { from { transform: translateY(0); } to { transform: translateY(4px); } }
+
+  .hero-text { position: absolute; top: 22px; left: 85px; }
+  .greeting { font-size: 19px; font-weight: 600; color: var(--text); }
+  .greeting .name { color: #ffcf5c; }
+  .signoff { margin-top: 7px; font-size: 12px; color: var(--muted); transition: opacity .12s; }
+
+  /* 数据卡片 */
+  .cards { position: absolute; top: 136px; left: 24px; display: flex; gap: 11px; }
+  .card {
+    width: 126px; height: 58px;
+    background: url("WOWGoldMaker/Media/card.png") center / 100% 100% no-repeat;
+    padding: 9px 12px 10px;
+    cursor: default;
+    transition: filter .15s;
+  }
+  .card:hover { filter: brightness(1.7); }
+  .card .label { font-size: 10px; color: var(--faint); letter-spacing: 1px; }
+  .card .value { margin-top: 7px; font-size: 17px; font-weight: 700; color: var(--text); }
+  .card.gold .value { color: var(--gold); }
+
+  /* 底部 */
+  .footer-hint {
+    position: absolute; bottom: 27px; left: 26px;
+    font-size: 10px; color: var(--faint); letter-spacing: .5px;
+  }
+  .btn {
+    position: absolute; bottom: 24px;
+    height: 36px; border: none; border-radius: 10px;
+    font-size: 13px; font-weight: 600; cursor: pointer;
+    font-family: inherit;
+    transition: filter .15s, transform .08s;
+  }
+  .btn:active { transform: scale(.97); }
+  .btn.primary {
+    right: 24px; width: 132px;
+    background: linear-gradient(180deg, var(--gold-hi) 0%, var(--gold) 55%, #caa23e 100%);
+    color: var(--ink);
+    box-shadow: 0 0 0 1px rgba(255,235,170,.5) inset, 0 0 22px rgba(232,194,90,.35);
+  }
+  .btn.primary:hover { filter: brightness(1.12); box-shadow: 0 0 0 1px rgba(255,235,170,.7) inset, 0 0 30px rgba(232,194,90,.55); }
+  .btn.secondary {
+    right: 166px; width: 84px;
+    background: rgba(255,255,255,.14);
+    color: var(--muted);
+    box-shadow: 0 0 0 1px rgba(255,255,255,.14) inset;
+  }
+  .btn.secondary:hover { background: rgba(255,255,255,.22); color: var(--text); }
+
+  /* ---------- 设置页 mock ---------- */
+  .settings {
+    width: 560px; border: 1px solid rgba(255,255,255,.08); border-radius: 12px;
+    background: #191b21; padding: 22px 24px 26px;
+  }
+  .settings h2 { font-size: 16px; }
+  .settings h2 span { color: var(--gold); }
+  .settings .sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .settings hr { border: none; border-top: 1px solid rgba(255,255,255,.1); margin: 16px 0; }
+  .row { display: flex; align-items: center; gap: 10px; margin: 12px 0; cursor: pointer; }
+  .box {
+    width: 20px; height: 20px; border-radius: 6px;
+    background: rgba(255,255,255,.12);
+    border: 1px solid rgba(255,255,255,.28);
+    display: flex; align-items: center; justify-content: center;
+    transition: all .15s;
+  }
+  .row.on .box { background: rgba(232,194,90,.75); border-color: var(--gold); }
+  .check { color: #211b0f; font-size: 13px; font-weight: 800; opacity: 0; }
+  .row.on .check { opacity: 1; }
+  .row span.lbl { font-size: 13px; }
+  .settings .btnrow { display: flex; gap: 10px; margin-top: 16px; }
+  .settings .gbtn {
+    padding: 7px 18px; border-radius: 7px; border: 1px solid rgba(255,255,255,.2);
+    background: rgba(255,255,255,.06); color: var(--text); font-size: 12px; cursor: pointer;
+    font-family: inherit;
+  }
+  .settings .gbtn:hover { background: rgba(255,255,255,.12); }
+  .settings .help { margin-top: 16px; font-size: 12px; color: var(--muted); line-height: 1.9; }
+  .settings .help b { color: var(--gold); font-weight: 600; }
+</style>
+</head>
+<body>
+
+<h1><b>WOWGOLDMAKER</b> · 无限服插件预览 (v0.1.0)</h1>
+
+<div class="window">
+  <div class="shadow"></div>
+  <div class="panel">
+    <div class="blob gold"></div>
+    <div class="blob teal"></div>
+
+    <div class="title">金币工坊</div>
+    <div class="chip">v0.1.0</div>
+    <button class="close" title="关闭"><i class="x x1"></i><i class="x x2"></i></button>
+    <div class="divider"></div>
+    <div class="accent"></div>
+
+    <div class="coin-wrap">
+      <div class="coin-glow"></div>
+      <div class="coin"><span>G</span></div>
+    </div>
+    <div class="hero-text">
+      <div class="greeting" id="greeting">晚上好, <span class="name">冒险者</span>。</div>
+      <div class="signoff" id="signoff">今天的拍卖行是你的舞台。</div>
+    </div>
+
+    <div class="cards">
+      <div class="card gold"><div class="label">金币</div><div class="value">12,345</div></div>
+      <div class="card"><div class="label">等级</div><div class="value">60</div></div>
+      <div class="card"><div class="label">在线</div><div class="value" id="sess">00:00</div></div>
+    </div>
+
+    <div class="footer-hint">按住拖动 · /wgm 呼出</div>
+    <button class="btn secondary">设置</button>
+    <button class="btn primary" id="greetBtn">打个招呼</button>
+  </div>
+</div>
+
+<div class="settings">
+  <h2><span>金币工坊</span> v0.1.0</h2>
+  <div class="sub">魔兽世界无限服 · 金币工具箱 (Hello 骨架)</div>
+  <hr>
+  <div class="row on" id="row1"><div class="box"><span class="check">✓</span></div><span class="lbl">登录后自动呼出主界面</span></div>
+  <div class="row on" id="row2"><div class="box"><span class="check">✓</span></div><span class="lbl">启用界面动画</span></div>
+  <div class="btnrow">
+    <button class="gbtn">重置窗口位置</button>
+    <button class="gbtn">打开主界面</button>
+  </div>
+  <div class="help">
+    <b>/wgm</b> 开关主界面 &nbsp;·&nbsp; <b>/wgm reset</b> 重置位置 &nbsp;·&nbsp; <b>/wgm config</b> 打开本设置页
+  </div>
+</div>
+
+<script>
+  const signoffs = [
+    "愿你的背包永不爆满。",
+    "今天的拍卖行是你的舞台。",
+    "金币在召唤, 勇士。",
+    "捡起那枚没人要的金币吧。",
+    "稳住, 我们能搬空整个副本。",
+    "先定一个小目标: 背包里全是金币。",
+  ];
+  let idx = 1;
+  document.getElementById("greetBtn").onclick = () => {
+    idx = (idx + 1) % signoffs.length;
+    const el = document.getElementById("signoff");
+    el.style.opacity = 0;
+    setTimeout(() => { el.textContent = signoffs[idx]; el.style.opacity = 1; }, 120);
+  };
+  for (const id of ["row1", "row2"]) {
+    document.getElementById(id).onclick = e => e.currentTarget.classList.toggle("on");
+  }
+  const t0 = Date.now();
+  setInterval(() => {
+    const s = Math.floor((Date.now() - t0) / 1000);
+    const mm = String(Math.floor(s / 60)).padStart(2, "0");
+    const ss = String(s % 60).padStart(2, "0");
+    document.getElementById("sess").textContent = mm + ":" + ss;
+  }, 1000);
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+## Interface: 16001, 120100, 120105
+## Title: |cffe8c25aGoldMaker|r
+## Title-zhCN: |cffe8c25a金币工坊|r
+## Notes: Modern gold-making toolkit for WoW Forever.
+## Notes-zhCN: 金币工坊 —— 无限服现代风格插件 (Hello 界面骨架)
+## Author: WOWGoldMaker
+## Version: 0.1.0
+## Category: 实用工具
+## IconTexture: Interface\Icons\INV_Misc_Coin_01
+## SavedVariables: WOWGoldMakerDB
+
+Theme.lua
+Core.lua
+Settings.lua
+UI.lua
