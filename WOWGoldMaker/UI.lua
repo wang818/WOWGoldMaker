@@ -14,6 +14,9 @@ local W, H = 440, 356
 
 local frame
 local refs = {}          -- 需要跨函数更新的控件
+local profIcons = {}     -- 专业卡片图标, 供延迟补全 (物品图标可能晚于界面就绪)
+local iconsPending = true
+local iconsTries = 0
 local sessionStart
 local selfCheckDone
 local SIGNOFFS = {
@@ -394,7 +397,10 @@ local function BuildProfessions(f)
         local icon = card:CreateTexture(nil, "ARTWORK")
         icon:SetSize(26, 26)
         icon:SetPoint("LEFT", card, "LEFT", 9, 0)
-        icon:SetTexture(prof.icon)
+        -- 图标来自游戏内数据反查 (法术贴图/物品图标), 裁掉边缘 7% 的圆角空白
+        icon:SetTexture((ns.Prof.Icon and ns.Prof.Icon(prof.key)) or "Interface\\Icons\\INV_Misc_QuestionMark")
+        icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+        profIcons[prof.key] = icon
 
         local name = T.Text(card, 13, C.text)
         name:SetPoint("TOPLEFT", icon, "TOPRIGHT", 7, 5)
@@ -418,6 +424,25 @@ local function BuildProfessions(f)
             end
         end)
     end
+end
+
+-- 图标可能因为物品数据还没回包而先落到问号, 逐秒重试直到全部解析成真实贴图
+local function RefreshProfIcons()
+    if not (ns.Prof and ns.Prof.Icon) then return true end
+    local resolved = true
+    for key, tex in pairs(profIcons) do
+        local path = ns.Prof.Icon(key)
+        if path then
+            if path == "Interface\\Icons\\INV_Misc_QuestionMark" then
+                resolved = false
+            else
+                pcall(tex.SetTexture, tex, path)
+            end
+        else
+            resolved = false
+        end
+    end
+    return resolved
 end
 
 local function BuildFooter(f)
@@ -550,6 +575,12 @@ function ns.UI.Build()
             pcall(function() refs.time:SetText(T.FormatDuration(GetTime() - sessionStart)) end)
         end
         pcall(ns.UI.RefreshStats)
+
+        -- 专业图标延迟补全 (首次解析可能是问号占位, 最多重试 20 次)
+        if iconsPending and iconsTries < 20 then
+            iconsTries = iconsTries + 1
+            pcall(function() iconsPending = not RefreshProfIcons() end)
+        end
 
         -- 兜底: 金币图标不该有任何缩放。一旦被动画改成别的值(该客户端循环动画会累积
         -- 增量, 表现为图标持续放大直至铺满屏幕), 立即停掉动画并归位。

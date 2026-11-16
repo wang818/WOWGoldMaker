@@ -160,6 +160,7 @@
     width: 26px; height: 26px; border-radius: 6px; flex: 0 0 26px;
     display: flex; align-items: center; justify-content: center;
     font-size: 14px; line-height: 1;
+    font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", system-ui, sans-serif;
   }
   .picon.heal { background: linear-gradient(160deg,#7d2b2b,#3d1414); color: #ffd7d7; box-shadow: inset 0 0 0 1px rgba(255,150,150,.35); }
   .picon.cook { background: linear-gradient(160deg,#7a4a1c,#3a2210); color: #ffe0b0; box-shadow: inset 0 0 0 1px rgba(255,190,110,.35); }
@@ -203,9 +204,17 @@
   .rscroll::-webkit-scrollbar { width: 3px; }
   .rscroll::-webkit-scrollbar-thumb { background: rgba(232,194,90,.5); border-radius: 2px; }
   .rscroll::-webkit-scrollbar-track { background: rgba(255,255,255,.05); }
-  .rrow { height: 34px; padding-top: 4px; }
+  .rrow { height: 34px; padding-top: 4px; display: flex; align-items: center; gap: 8px; }
+  .rrow .ico {
+    width: 22px; height: 22px; border-radius: 4px; flex: 0 0 22px;
+    background: linear-gradient(160deg, #4a4033, #241f18);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.10);
+  }
+  .rrow .ico.heal { background: linear-gradient(160deg, #7d2b2b, #3d1414); box-shadow: inset 0 0 0 1px rgba(255,150,150,.28); }
+  .rrow .ico.cook { background: linear-gradient(160deg, #7a4a1c, #3a2210); box-shadow: inset 0 0 0 1px rgba(255,190,110,.28); }
+  .rrow .txt { flex: 1; min-width: 0; }
   .rrow .t { font-size: 12px; color: var(--text); white-space: nowrap; overflow: hidden; }
-  .rrow .m { font-size: 9px; color: var(--faint); padding-left: 6px; margin-top: 3px; white-space: nowrap; overflow: hidden; }
+  .rrow .m { font-size: 9px; color: var(--faint); padding-left: 4px; margin-top: 3px; white-space: nowrap; overflow: hidden; }
   .rrow .idx { color: var(--faint); }
   .rrow .skill { color: #8a929e; }
   .rfoot { position: absolute; bottom: 12px; left: 26px; right: 26px; display: flex; align-items: center; }
@@ -274,7 +283,7 @@
 </head>
 <body>
 
-<h1><b>WOWGOLDMAKER</b> · 无限服插件预览 (v0.2.0)</h1>
+<h1><b>WOWGOLDMAKER</b> · 无限服插件预览 (v0.2.1)</h1>
 
 <div class="window">
   <div class="shadow"></div>
@@ -283,7 +292,7 @@
     <div class="blob teal"></div>
 
     <div class="title">金币工坊</div>
-    <div class="chip">v0.2.0</div>
+    <div class="chip">v0.2.1</div>
     <button class="close" title="关闭"><i class="x x1"></i><i class="x x2"></i></button>
     <div class="divider"></div>
     <div class="accent"></div>
@@ -341,7 +350,7 @@
 </div>
 
 <div class="settings">
-  <h2><span>金币工坊</span> v0.2.0</h2>
+  <h2><span>金币工坊</span> v0.2.1</h2>
   <div class="sub">魔兽世界无限服 · 金币工具箱 (Hello 骨架)</div>
   <hr>
   <div class="row on" id="row1"><div class="box"><span class="check">✓</span></div><span class="lbl">登录后自动呼出主界面</span></div>
@@ -447,14 +456,18 @@
     document.getElementById("rTitle").textContent = p.name;
 
     let html = "";
+    const icoCls = p.cls;
     if (curMode === "list") {
       document.getElementById("rSub").textContent = `${p.rows.length} 条配方 · 按技能等级排序`;
       p.rows.forEach(([n, made, req, mats], i) => {
         const idx = String(i + 1).padStart(2, " ");
         const md = made > 1 ? ` <span style="color:#9d9d9d">×${made}</span>` : "";
         html += `<div class="rrow">
-          <div class="t"><span class="idx">${idx}.</span>&nbsp; ${n}${md} &nbsp; <span class="skill">[${req}]</span></div>
-          <div class="m">${matsText(mats)}</div>
+          <div class="ico ${icoCls}"></div>
+          <div class="txt">
+            <div class="t"><span class="idx">${idx}.</span>&nbsp; ${n}${md} &nbsp; <span class="skill">[${req}]</span></div>
+            <div class="m">${matsText(mats)}</div>
+          </div>
         </div>`;
       });
     } else {
@@ -463,7 +476,10 @@
       agg.forEach(([n, c], i) => {
         const idx = String(i + 1).padStart(2, " ");
         html += `<div class="rrow">
-          <div class="t"><span class="idx">${idx}.</span>&nbsp; ${n} &nbsp; <span style="color:#fff">×${c}</span></div>
+          <div class="ico ${icoCls}"></div>
+          <div class="txt">
+            <div class="t"><span class="idx">${idx}.</span>&nbsp; ${n} &nbsp; <span style="color:#fff">×${c}</span></div>
+          </div>
         </div>`;
       });
     }

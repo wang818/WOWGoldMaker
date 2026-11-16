@@ -176,6 +176,12 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
     elseif msg:match("^prof ") or msg:match("^专业 ") then
         local key = msg:match("^prof (.+)$") or msg:match("^专业 (.+)$")
         ns.OpenRecipes(key)
+    elseif msg == "icons" then
+        if ns.Prof and ns.Prof.DebugIcons then
+            pcall(ns.Prof.DebugIcons)
+        else
+            ns.Print("|cffff5555专业模块未加载|r")
+        end
     elseif msg == "help" then
         ns.Print("命令列表:")
         print("  |cffe8c25a/wgm|r            打开 / 关闭主界面")
@@ -186,6 +192,7 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
         print("  |cffe8c25a/wgm fa|r         急救清单窗口")
         print("  |cffe8c25a/wgm cooking|r    烹饪清单窗口")
         print("  |cffe8c25a/wgm prof|r       列出所有专业")
+        print("  |cffe8c25a/wgm icons|r      诊断专业/物品图标能否解析")
     else
         ns.UI.Toggle()
     end

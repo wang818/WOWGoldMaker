@@ -54,14 +54,21 @@ local function GetRow(i)
     r = CreateFrame("Frame", nil, content)
     r:SetSize(LIST_W, ROW_H)
 
+    -- 物品图标 (取自游戏内数据, 拿不到时隐藏, 文字位置保持不变)
+    r.icon = r:CreateTexture(nil, "ARTWORK")
+    r.icon:SetSize(22, 22)
+    r.icon:SetPoint("LEFT", 1, 0)
+    r.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+    r.icon:Hide()
+
     r.title = T.Text(r, 12, C.text)
-    r.title:SetPoint("TOPLEFT", 0, -4)
-    r.title:SetWidth(LIST_W)
+    r.title:SetPoint("TOPLEFT", 30, -4)
+    r.title:SetWidth(LIST_W - 34)
     r.title:SetWordWrap(false)
 
     r.mats = T.Text(r, 9, C.faint)
-    r.mats:SetPoint("TOPLEFT", 6, -20)
-    r.mats:SetWidth(LIST_W - 6)
+    r.mats:SetPoint("TOPLEFT", 34, -20)
+    r.mats:SetWidth(LIST_W - 38)
     r.mats:SetWordWrap(false)
 
     rows[i] = r
@@ -70,12 +77,32 @@ end
 
 --------------------------------------------------------------------------- 渲染
 
+-- 行图标: 客户端还没缓存该物品时返回 nil, 这行就先不显示图标 (文字位置不变)
+local function SetRowIcon(r, itemID)
+    r.itemID = itemID
+    local tex = ns.Prof.ItemIcon and ns.Prof.ItemIcon(itemID)
+    if tex then
+        r.icon:SetTexture(tex)
+        r.icon:Show()
+    else
+        r.icon:Hide()
+    end
+end
+
+-- 物品数据回包后补上图标 (首次打开时多数物品可能还没缓存)
+local function RefreshRowIcons()
+    for i = 1, #rows do
+        local r = rows[i]
+        if r and r:IsShown() and r.itemID then SetRowIcon(r, r.itemID) end
+    end
+end
+
 local function Render()
     local prof = ns.Prof.byKey[curKey]
     if not prof then return end
 
     titleFS:SetText(prof.name)
-    frame.icon:SetTexture(prof.icon)
+    frame.icon:SetTexture((ns.Prof.Icon and ns.Prof.Icon(curKey)) or "Interface\\Icons\\INV_Misc_QuestionMark")
 
     local recipes = ns.Prof.Get(curKey) or {}
     local items
@@ -103,12 +130,14 @@ local function Render()
                 local m = items[i]
                 r.title:SetText(format("|cff6f7783%2d.|r  %s  |cffffffff×%d|r", i, m.name, m.count))
                 r.mats:SetText("")
+                SetRowIcon(r, m.id)
             else
                 local rec = items[i]
                 local made = (rec.made and rec.made > 1) and format(" |cff9d9d9d×%d|r", rec.made) or ""
                 r.title:SetText(format("|cff6f7783%2d.|r  %s%s   |cff8a929e[%d]|r",
                     i, rec.name, made, rec.req or 0))
                 r.mats:SetText(ns.Prof.MatsLine(rec.mats))
+                SetRowIcon(r, rec.item)
             end
         elseif r then
             r:Hide()
@@ -143,6 +172,7 @@ local function Build()
     local icon = f:CreateTexture(nil, "ARTWORK")
     icon:SetSize(32, 32)
     icon:SetPoint("TOPLEFT", PAD, -20)
+    icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
     f.icon = icon
 
     titleFS = T.Text(f, 17, C.text)
@@ -243,6 +273,14 @@ local function Open(key, mode)
         ns.Print("|cffff5555配方列表渲染失败:|r " .. tostring(err))
         pcall(geterrorhandler(), "WOWGoldMaker 配方列表渲染失败: " .. tostring(err))
     end
+
+    -- 物品图标/名称是懒加载的, 隔两轮补一次 (只补图标, 不重置滚动位置)
+    C_Timer.After(1.5, function()
+        if frame and frame:IsShown() then pcall(RefreshRowIcons) end
+    end)
+    C_Timer.After(5, function()
+        if frame and frame:IsShown() then pcall(RefreshRowIcons) end
+    end)
 end
 
 ns.RecipeList = {
