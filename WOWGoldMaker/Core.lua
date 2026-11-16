@@ -23,7 +23,8 @@ ns.IsForever     = ClientVersion() >= 16000 and ClientVersion() < 20000
 local DEFAULTS = {
     autoShow   = false,                                   -- 登录后自动呼出
     animations = true,                                    -- 界面动画
-    pos        = { point = "CENTER", relPoint = "CENTER", x = 0, y = 0 },
+    pos        = { point = "RIGHT", relPoint = "RIGHT", x = 0, y = 0 },   -- 屏幕右侧垂直居中
+    prices     = {},                                      -- 拍卖行价格缓存: itemID -> { unit, n, ts }
 }
 
 local db
@@ -118,7 +119,7 @@ end
 
 function ns.ResetPosition()
     if not db then return end
-    db.pos = { point = "CENTER", relPoint = "CENTER", x = 0, y = 0 }
+    db.pos = { point = "RIGHT", relPoint = "RIGHT", x = 0, y = 0 }
     if ns.UI and ns.UI.ApplyPosition then
         ns.UI.ApplyPosition()
     end
@@ -181,6 +182,20 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
         else
             ns.Print("|cffff5555专业模块未加载|r")
         end
+    elseif msg == "ah" or msg == "price" or msg == "查价" then
+        if ns.Auction then
+            ns.Auction.Debug()
+        else
+            ns.Print("|cffff5555查价模块未加载|r (检查 Auction.lua 是否在 .toc 里)")
+        end
+    elseif msg == "ah list" or msg == "ah dump" or msg == "查价 明细" then
+        if ns.Auction then
+            ns.Auction.Dump()
+        else
+            ns.Print("|cffff5555查价模块未加载|r")
+        end
+    elseif msg == "ah clear" or msg == "查价 清空" then
+        if ns.Auction then ns.Auction.Clear() end
     elseif msg == "help" then
         ns.Print("命令列表:")
         print("  |cffe8c25a/wgm|r            打开 / 关闭主界面")
@@ -192,6 +207,9 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
         print("  |cffe8c25a/wgm cooking|r    主界面切到烹饪列表")
         print("  |cffe8c25a/wgm prof|r       列出所有专业")
         print("  |cffe8c25a/wgm icons|r      诊断专业/物品图标能否解析")
+        print("  |cffe8c25a/wgm ah|r         拍卖行查价状态 (API / 是否打开 / 缓存)")
+        print("  |cffe8c25a/wgm ah list|r    逐条列出缓存价格与缺价原因")
+        print("  |cffe8c25a/wgm ah clear|r   清空价格缓存")
     else
         ns.UI.Toggle()
     end

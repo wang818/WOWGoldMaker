@@ -13,6 +13,8 @@
     --muted: #949ba6;
     --faint: #666c78;
     --ink: #211b0f;
+    --green: #66cc73;
+    --red: #eb6b6b;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -31,13 +33,17 @@
   }
   h1 b { color: var(--gold); font-weight: 700; }
 
-  /* ---------- 主窗口: 宽高 = 视口宽高的 90% ---------- */
+  /* ---------- 主窗口: 宽度 = 视口宽度 50%, 贴在右侧、垂直居中 ---------- */
   .window {
-    position: relative;
-    width: 90vw;
-    height: 90vh;
-    margin: 5vh auto 0;
+    position: fixed;
+    right: 24px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 50vw;
+    /* 高度按设计稿比例 (440:440 = 1:1), 上限 90vh —— 对应 UI.lua 的 PanelSize */
+    height: min(50vw, 90vh);
     filter: drop-shadow(0 18px 30px rgba(0,0,0,.55));
+    z-index: 10;
   }
   .window .shadow {
     position: absolute; inset: -22px -23px -22px -23px;
@@ -55,7 +61,7 @@
   .content {
     position: absolute;
     left: 50%; top: 50%;
-    width: 440px; height: 356px;
+    width: 440px; height: 440px;
     transform: translate(-50%, -50%) scale(1);
     transform-origin: center center;
   }
@@ -77,10 +83,10 @@
 
   /* ---------- 第一行: 头像 / 问候 / 金币 / 等级 / 在线 / 设置 ---------- */
   .topbar {
-    position: absolute; left: 20px; right: 14px; top: 14px; height: 26px;
-    display: flex; align-items: center; gap: 12px;
+    position: absolute; left: 20px; right: 14px; top: 10px; height: 22px;
+    display: flex; align-items: center; gap: 10px;
   }
-  .coin-wrap { position: relative; width: 26px; height: 26px; flex: 0 0 26px; }
+  .coin-wrap { position: relative; width: 22px; height: 22px; flex: 0 0 22px; }
   .coin-glow {
     position: absolute; inset: -18px; border-radius: 50%;
     background: radial-gradient(circle, rgba(232,194,90,.55) 0%, transparent 62%);
@@ -94,13 +100,13 @@
     display: flex; align-items: center; justify-content: center;
     animation: bob 3.2s ease-in-out infinite alternate;
   }
-  .coin span { font-size: 13px; font-weight: 800; color: #7a5c18; text-shadow: 0 1px 0 rgba(255,235,170,.7); }
+  .coin span { font-size: 12px; font-weight: 800; color: #7a5c18; text-shadow: 0 1px 0 rgba(255,235,170,.7); }
   @keyframes bob { from { opacity: .85; } to { opacity: 1; } }
 
-  .greet { font-size: 12px; font-weight: 600; color: var(--text); white-space: nowrap; }
+  .greet { font-size: 11px; font-weight: 600; color: var(--text); white-space: nowrap; }
   .greet .name { color: #ffcf5c; }
 
-  .money { font-size: 11px; font-weight: 700; letter-spacing: .2px; white-space: nowrap; }
+  .money { font-size: 10px; font-weight: 700; letter-spacing: .2px; white-space: nowrap; }
   .m-gold { color: #ffd100; }
   .m-silver { color: #e6edf5; }
   .m-copper { color: #b87333; }
@@ -108,20 +114,20 @@
 
   .spacer { flex: 1 1 auto; }
 
-  .lv { font-size: 11px; color: var(--text); white-space: nowrap; }
-  .sess { font-size: 11px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .lv { font-size: 10px; color: var(--text); white-space: nowrap; }
+  .sess { font-size: 10px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
 
   .mini {
-    height: 20px; padding: 0 10px; border: none; border-radius: 6px;
+    height: 18px; padding: 0 8px; border: none; border-radius: 5px;
     background: rgba(255,255,255,.10);
-    color: var(--muted); font-size: 10px; font-weight: 600;
+    color: var(--muted); font-size: 9px; font-weight: 600;
     font-family: inherit; cursor: pointer; white-space: nowrap;
     transition: background .15s, color .15s;
   }
   .mini:hover { background: rgba(255,255,255,.18); color: var(--text); }
 
   .close {
-    width: 24px; height: 24px; border-radius: 8px; flex: 0 0 24px;
+    width: 22px; height: 22px; border-radius: 7px; flex: 0 0 22px;
     display: flex; align-items: center; justify-content: center;
     cursor: pointer; background: transparent; border: none; position: relative;
   }
@@ -131,73 +137,168 @@
   .close .x2 { transform: rotate(-45deg); }
   .close:hover .x { background: var(--text); }
 
-  .divider { position: absolute; top: 47px; left: 20px; right: 20px; height: 1px; background: rgba(255,255,255,.07); }
+  .divider { position: absolute; top: 36px; left: 20px; right: 20px; height: 1px; background: rgba(255,255,255,.07); }
 
   /* ---------- 第二行: 专业页签 + 视图切换 ---------- */
-  .tabs { position: absolute; top: 56px; left: 20px; display: flex; gap: 6px; }
+  .tabs { position: absolute; top: 44px; left: 20px; display: flex; gap: 6px; }
   .tab {
-    height: 24px; padding: 0 12px 0 9px; border: none; border-radius: 7px;
+    height: 20px; padding: 0 10px 0 7px; border: none; border-radius: 6px;
     background: rgba(255,255,255,.07);
-    color: var(--muted); font-size: 11px; font-weight: 600;
+    color: var(--muted); font-size: 10px; font-weight: 600;
     font-family: inherit; cursor: pointer;
-    display: flex; align-items: center; gap: 5px;
+    display: flex; align-items: center; gap: 4px;
     transition: background .15s, color .15s;
   }
   .tab:hover { background: rgba(255,255,255,.14); }
   .tab.on { background: linear-gradient(180deg, var(--gold-hi), var(--gold) 60%, #caa23e); color: var(--ink); }
   .tab .tico {
-    width: 14px; height: 14px; border-radius: 3px; flex: 0 0 14px;
+    width: 12px; height: 12px; border-radius: 3px; flex: 0 0 12px;
     display: flex; align-items: center; justify-content: center;
     font-size: 9px; line-height: 1;
     font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", system-ui, sans-serif;
   }
   .tico.heal { background: linear-gradient(160deg,#7d2b2b,#3d1414); color: #ffd7d7; }
   .tico.cook { background: linear-gradient(160deg,#7a4a1c,#3a2210); color: #ffe0b0; }
-  .switch { position: absolute; top: 56px; right: 14px; height: 24px; }
+  .switch { position: absolute; top: 44px; right: 14px; height: 20px; }
 
   /* ---------- 配方列表 ---------- */
   .list {
-    position: absolute; top: 90px; left: 20px; right: 26px; bottom: 14px;
+    position: absolute; top: 72px; left: 20px; right: 26px; bottom: 10px;
     overflow-y: auto; overflow-x: hidden;
   }
   .list::-webkit-scrollbar { width: 3px; }
   .list::-webkit-scrollbar-thumb { background: rgba(232,194,90,.5); border-radius: 2px; }
   .list::-webkit-scrollbar-track { background: rgba(255,255,255,.05); }
 
+  /* ---------- 页面内浮层提示 (对应 UI.lua 的 ns.UI.Notify) ---------- */
+  .toast {
+    position: absolute; left: 50%; bottom: 18px;
+    height: 26px; max-width: calc(100% - 40px);
+    display: flex; align-items: center; gap: 8px;
+    padding: 0 12px 0 9px; border-radius: 8px;
+    background: rgba(15, 17, 21, .96);
+    box-shadow: 0 6px 18px rgba(0,0,0,.45), inset 0 0 0 1px rgba(232,194,90,.16);
+    color: var(--gold); font-size: 10px; white-space: nowrap;
+    transform: translate(-50%, 6px); opacity: 0; pointer-events: none;
+    transition: opacity .16s ease, transform .16s ease;
+  }
+  .toast i {
+    width: 3px; height: 14px; border-radius: 2px;
+    background: var(--gold); flex: 0 0 3px;
+  }
+  .toast.on { opacity: 1; transform: translate(-50%, 0); }
+
   .lrow {
-    height: 30px; display: flex; align-items: center; gap: 10px;
-    padding: 0 4px; border-radius: 5px;
+    height: 32px; display: flex; align-items: center; gap: 7px;
+    padding: 0; border-radius: 4px;
   }
   .lrow.odd { background: rgba(255,255,255,.025); }
   .lrow:hover { background: rgba(255,255,255,.05); }
 
   .lrow .ico {
-    width: 18px; height: 18px; border-radius: 4px; flex: 0 0 18px;
+    width: 15px; height: 15px; border-radius: 4px; flex: 0 0 15px;
+    align-self: flex-start; margin-top: 3px;
     background: linear-gradient(160deg, #4a4033, #241f18);
     box-shadow: inset 0 0 0 1px rgba(255,255,255,.10);
   }
   .lrow .ico.heal { background: linear-gradient(160deg, #7d2b2b, #3d1414); box-shadow: inset 0 0 0 1px rgba(255,150,150,.28); }
   .lrow .ico.cook { background: linear-gradient(160deg, #7a4a1c, #3a2210); box-shadow: inset 0 0 0 1px rgba(255,190,110,.28); }
 
-  .lrow .name {
-    width: 34%; min-width: 0; font-size: 11px; font-weight: 600; color: var(--text);
+  /* 商品列: 第一行名称, 第二行售价 */
+  .lrow .prod {
+    flex: 0 0 var(--tw, 80px); min-width: 0;
+    display: flex; flex-direction: column; justify-content: center; gap: 1px;
+  }
+  .lrow .pname {
+    font-size: 10px; font-weight: 600; color: var(--text);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-  .lrow .name .dim { color: #9d9d9d; font-weight: 400; }
-  .lrow .mats {
-    flex: 1 1 auto; min-width: 0; font-size: 9px; color: var(--faint);
+  .lrow .pname .dim { color: #9d9d9d; font-weight: 400; }
+  .lrow .psell { font-size: 8px; color: var(--gold); white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; }
+  .lrow .psell.dim { color: var(--faint); }
+  .lrow .psell.bad { color: var(--red); }
+
+  /* 材料列: 每样材料一格 —— 图标 / 名字×数量 / 单价 (与 UI.lua 的三行一致) */
+  .lrow .mats { flex: 1 1 0; min-width: 0; display: flex; align-self: stretch; }
+  .lrow .mcell {
+    flex: 1 1 0; min-width: 0;
+    display: flex; flex-direction: column; justify-content: flex-start;
+    gap: 1px; padding-top: 1px;
+  }
+  /* 材料小图标 (对应 Lua 的 CELL_ICON 8px) */
+  .lrow .mico {
+    width: 8px; height: 8px; border-radius: 2px; flex: 0 0 8px;
+    background: linear-gradient(160deg, #4a4033, #241f18);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.10);
+  }
+  .lrow .mname {
+    font-size: 7px; color: var(--muted);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-  .lrow .mats b { color: #fff; font-weight: 400; }
+  .lrow .mname .dim { color: #8a929e; }
+  .lrow .mprice {
+    font-size: 7px; color: var(--gold);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .lrow .mprice.dim { color: var(--faint); }
+  .lrow .mprice.bad { color: var(--red); }
+
   .lrow .req {
-    width: 46px; flex: 0 0 46px; text-align: right;
-    font-size: 10px; color: #8a929e;
+    flex: 0 0 auto; text-align: right;
+    font-size: 9px; color: #8a929e;
   }
   .lrow .req.gold { color: var(--gold); font-weight: 700; }
 
+  /* 价格列 + 查价按钮 */
+  .lrow .price {
+    flex: 0 0 var(--pw, 66px); text-align: right; font-size: 8px;
+    color: var(--faint); white-space: nowrap; overflow: hidden;
+  }
+  .lrow .price.good { color: var(--green); font-weight: 600; }
+  .lrow .price.bad  { color: var(--red); font-weight: 600; }
+  .lrow .price.gold { color: var(--gold); }
+  .lrow .price.wait { color: var(--gold); }
+  .lrow .qbtn {
+    flex: 0 0 40px; height: 14px; border-radius: 4px;
+    background: rgba(255,255,255,.10);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 8px; color: var(--muted); cursor: pointer;
+    transition: background .15s, color .15s;
+  }
+  .lrow .qbtn:hover { background: rgba(255,255,255,.20); color: var(--text); }
+
+  /* ---------- 行悬停提示 (对应 ns.UI.ShowRowTooltip) ----------
+     整块 UI 收小一档后长标题更容易被截断, 悬停给出完整名字 + 材料清单 */
+  .tip {
+    position: fixed; z-index: 60; pointer-events: none; display: none;
+    min-width: 130px; max-width: 260px;
+    padding: 8px 10px 9px; border-radius: 8px;
+    background: rgba(10, 12, 16, .97);
+    box-shadow: 0 8px 22px rgba(0,0,0,.55), inset 0 0 0 1px rgba(255,255,255,.10);
+  }
+  .tip.on { display: block; }
+  .tip .t { font-size: 12px; font-weight: 700; color: #fff; line-height: 1.35; }
+  .tip .sub { margin-top: 3px; font-size: 10px; color: var(--muted); }
+  .tip .mrow {
+    display: flex; justify-content: space-between; gap: 14px;
+    font-size: 10px; color: #d8dbe0; margin-top: 2px;
+  }
+  .tip .mrow span:last-child { color: var(--muted); }
+  .tip .hint { margin-top: 6px; font-size: 10px; color: var(--faint); }
+
   /* ---------- 设置页 mock ---------- */
+  /* 预览页专用的演示控件 (游戏里没有这一块) */
+  .demo {
+    position: fixed; left: 24px; bottom: 18px; z-index: 20;
+    display: flex; align-items: center; gap: 14px;
+    margin: 0; font-size: 11px; color: var(--faint);
+  }
+  .demo label { display: flex; align-items: center; gap: 7px; cursor: pointer; color: var(--muted); }
+  .demo input { accent-color: #e8c25a; }
   .settings {
-    width: 560px; margin: 48px auto 0;
+    position: fixed; left: 24px; top: 50%; transform: translateY(-50%);
+    width: min(42vw, 520px); z-index: 5;
     border: 1px solid rgba(255,255,255,.08); border-radius: 12px;
     background: #191b21; padding: 22px 24px 26px;
   }
@@ -230,7 +331,7 @@
 </head>
 <body>
 
-<h1><b>WOWGOLDMAKER</b> · 单页预览 (v0.2.1)</h1>
+<h1><b>WOWGOLDMAKER</b> · 单页预览 (v0.5.5)</h1>
 
 <div class="window">
   <div class="shadow"></div>
@@ -266,11 +367,22 @@
 
     <!-- 配方列表 (内嵌, 默认急救) -->
     <div class="list" id="list"></div>
+
+    <!-- 页面内提示 (拍卖行未打开等), 对应 ns.UI.Notify -->
+    <div class="toast" id="toast"><i></i><span id="toastText"></span></div>
   </div>
 </div>
 
+<!-- 行悬停提示, 对应 ns.UI.ShowRowTooltip -->
+<div class="tip" id="tip"></div>
+
+<div class="demo">
+  <label><input type="checkbox" id="ahOpen"> 模拟：拍卖行窗口已打开</label>
+  <span>未勾选时点「查价」→ 面板内浮层提示（不写聊天框）</span>
+</div>
+
 <div class="settings">
-  <h2><span>金币工坊</span> v0.2.1</h2>
+  <h2><span>金币工坊</span> v0.5.5</h2>
   <div class="sub">魔兽世界无限服 · 金币工具箱</div>
   <hr>
   <div class="row on" id="row1"><div class="box"><span class="check">✓</span></div><span class="lbl">登录后自动呼出主界面</span></div>
@@ -286,11 +398,12 @@
 
 <script>
   /* ==================== 主面板尺寸 ====================
-     对应 UI.lua 的 ComputeLayout:
-       面板 = 视口宽高的 90%; 内容高度固定 356, 宽度按面板比例撑开, 整体等比缩放居中 */
+     对应 UI.lua 的 PanelSize + ComputeLayout:
+       面板宽度 = 视口宽度 50%, 高度按设计稿比例 356/440 (上限 90vh);
+       内容高度固定 440, 宽度按面板比例撑开, 整体等比缩放居中 */
   const winEl = document.querySelector(".window");
   const contentEl = document.querySelector(".content");
-  const BASE_W = 440, BASE_H = 356, PAD = 24, SCALE_MAX = 2.6;
+  const BASE_W = 440, BASE_H = 440, PAD = 24, SCALE_MAX = 2.6;
 
   function layoutHome() {
     const pw = winEl.clientWidth, ph = winEl.clientHeight;
@@ -314,7 +427,7 @@
       name: "急救", icon: "✚", cls: "heal",
       rows: [
         ["亚麻绷带", 1, 1, [["亚麻布", 1]]],
-        ["初级治疗药水", 1, 1, [["空瓶", 1], ["宁神花", 1]]],
+        ["初级治疗药水", 1, 1, [["空瓶", 1], ["宁神花", 1], ["荆棘藻", 1]]],
         ["厚亚麻绷带", 1, 40, [["亚麻布", 2]]],
         ["毛料绷带", 1, 80, [["毛料", 1]]],
         ["抗毒药剂", 3, 80, [["小毒囊", 1]]],
@@ -348,10 +461,24 @@
   };
 
   let curKey = "first-aid", curMode = "list";
+  const $ahOpen = document.getElementById("ahOpen");
 
   const $tabs = document.getElementById("tabs");
   const $list = document.getElementById("list");
   const $switch = document.getElementById("switchBtn");
+
+  /* ---------- 页面内提示 (对应 UI.lua 的 ns.UI.Notify) ----------
+     自动淡出, 点一下提前收起; 同时只显示最后一条 */
+  const $toast = document.getElementById("toast");
+  const $toastText = document.getElementById("toastText");
+  let toastTimer = null;
+  function showToast(msg, hold) {
+    $toastText.textContent = msg;
+    $toast.classList.add("on");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => $toast.classList.remove("on"), hold || 4500);
+  }
+  $toast.onclick = () => { clearTimeout(toastTimer); $toast.classList.remove("on"); };
 
   function summarize(rows) {
     const agg = new Map();
@@ -361,8 +488,67 @@
     return [...agg.entries()].sort((a, b) => b[1] - a[1]);
   }
 
-  function matsText(mats) {
-    return mats.map(([n, c]) => `${n}<b>×${c}</b>`).join("&nbsp;&nbsp;");
+  /* 材料格: 每样材料一格, 图标 / 「名字×数量」 / 金额 (查价后填) */
+  function matsCells(mats) {
+    if (!mats.length) {
+      return `<div class="mcell"><div class="mname dim">无材料</div></div>`;
+    }
+    return mats.map(([n, c]) =>
+      `<div class="mcell" data-cnt="${c}">
+         <i class="mico"></i>
+         <div class="mname">${n}<span class="dim">×${c}</span></div>
+         <div class="mprice"></div>
+       </div>`).join("");
+  }
+
+  /* 查价相关的小工具 (与 Auction.lua 的口径一致: 铜 → 金/银) */
+  function money(c) {
+    c = Math.abs(Math.round(c));
+    const g = Math.floor(c / 10000);
+    const s = Math.floor((c % 10000) / 100);
+    if (g >= 10000) return (g / 10000).toFixed(1) + "万金";
+    if (g > 0) return s > 0 && g < 1000 ? `${g}金${s}银` : `${g}金`;
+    if (s > 0) return `${s}银`;
+    return `${c}铜`;
+  }
+
+  /* 材料格金额: 与 UI.lua 的 MatPriceText 同一套分档 ——
+     数量 > 1 时真正花的是「单价 × 数量」, 但格子很窄 (4 样材料只剩 ~30px), 按格宽挑一种:
+       宽格  1金20银×3 = 3金60银
+       中格  ×3 3金60银
+       窄格  共3金60银
+       极窄  3金60银                                  */
+  function approxWidth(s) {
+    let w = 0;
+    for (const ch of s) w += /[\u2e80-\u9fff\uff00-\uffef]/.test(ch) ? 8 : 4.4;
+    return w;
+  }
+  function matPriceHTML(unit, cnt, cw) {
+    const u = money(unit);
+    if (!(cnt > 1)) return u;
+    const t = money(unit * cnt);
+    const avail = cw - 2;
+    const full = `${u}×${cnt} = ${t}`;
+    if (approxWidth(full) <= avail) return full;
+    const mid = `×${cnt} ${t}`;
+    if (approxWidth(mid) <= avail) return `<span class="dim">×${cnt}</span> ${t}`;
+    const tot = `共${t}`;
+    if (approxWidth(tot) <= avail) return tot;
+    return t;
+  }
+
+  /* 示例盈亏 (铜): 一部分盈利一部分亏本, 纯演示用 */
+  function mockProfit(i) {
+    if (i % 4 === 3) return -((i * 137) % 4200 + 300);
+    if (i % 4 === 0) return 0;
+    return (i * 289) % 9000 + 200;
+  }
+
+  function priceHTML(p) {
+    if (p === null || p === undefined) return `<div class="price"></div>`;
+    if (p > 0) return `<div class="price good">盈 ${money(p)}</div>`;
+    if (p < 0) return `<div class="price bad">亏 ${money(-p)}</div>`;
+    return `<div class="price">持平</div>`;
   }
 
   function renderTabs() {
@@ -384,11 +570,17 @@
 
     if (curMode === "mats") {
       summarize(p.rows).forEach(([n, c], i) => {
+        const unit = (i * 733) % 8000 + 200;
         html += `<div class="lrow${i % 2 ? " odd" : ""}">
           <div class="ico ${cls}"></div>
-          <div class="name">${n}</div>
+          <div class="prod">
+            <div class="pname">${n}</div>
+            <div class="psell">单价 ${money(unit)}/个</div>
+          </div>
           <div class="mats"></div>
           <div class="req gold">×${c}</div>
+          <div class="price gold">共 ${money(unit * c)}</div>
+          <div class="qbtn" style="visibility:hidden">查价</div>
         </div>`;
       });
     } else {
@@ -396,9 +588,14 @@
         const md = made > 1 ? ` <span class="dim">×${made}</span>` : "";
         html += `<div class="lrow${i % 2 ? " odd" : ""}">
           <div class="ico ${cls}"></div>
-          <div class="name">${n}${md}</div>
-          <div class="mats">${matsText(mats)}</div>
+          <div class="prod">
+            <div class="pname">${n}${md}</div>
+            <div class="psell" data-made="${made}"></div>
+          </div>
+          <div class="mats">${matsCells(mats)}</div>
           <div class="req">[${req}]</div>
+          <div class="price"></div>
+          <div class="qbtn" data-i="${i}">查价</div>
         </div>`;
       });
     }
@@ -406,7 +603,139 @@
     $list.innerHTML = html;
     $list.scrollTop = 0;
     $switch.textContent = curMode === "list" ? "材料汇总" : "配方列表";
+
+    /* 列宽与 UI.lua 的 RowColumns 同一套算法:
+       先扣掉图标 / 按钮 / 价格 / 技能这些固定宽, 剩下的按 36:64 分给商品与材料 */
+    const rowW = $list.clientWidth || 392;
+    const priceW = Math.max(56, Math.min(120, rowW * 0.17));
+    const rightFixed = 40 + 2 + 6 + priceW + 6 + 22;
+    const restW = Math.max(150, rowW - 22 - 8 - rightFixed);
+    const titleW = Math.max(72, restW * 0.36);
+    $list.style.setProperty("--tw", titleW.toFixed(1) + "px");
+    $list.style.setProperty("--pw", priceW.toFixed(1) + "px");
+
+    // 行悬停数据 (对应 ns.UI.ShowRowTooltip): 完整标题 + 材料清单
+    const tipRows = curMode === "mats"
+      ? summarize(p.rows).map(([n, c]) => ({
+          title: n,
+          sub: "材料汇总",
+          mats: [],
+          hint: "共需 ×" + c,
+        }))
+      : p.rows.map(([n, made, req, mats]) => {
+          const md = made > 1 ? ` ×${made}` : "";
+          let sub = "材料配方 · 技能 " + req;
+          if (made > 1) sub += " · 一次做 " + made + " 个";
+          return {
+            title: n + md,
+            sub,
+            mats,
+            hint: "点右边的「查价」看拍卖行价格与盈亏",
+          };
+        });
+    [...$list.querySelectorAll(".lrow")].forEach((el, i) => { el._tip = tipRows[i]; });
+
+    // 查价按钮: 演示"查询中 n/m → 盈/亏"的过程
+    $list.querySelectorAll(".qbtn").forEach(btn => {
+      btn.onclick = e => {
+        e.stopPropagation();
+        const row = btn.parentElement;
+        const cell = row.querySelector(".price");
+
+        // 拍卖行没开: 提示落在页面上, 不写聊天框 (与游戏内 CheckRowPrice 一致)
+        if (!$ahOpen.checked) {
+          showToast("查价需要先打开拍卖行 · 打开拍卖行窗口后再点「查价」", 5000);
+          cell.className = "price gold";
+          cell.textContent = "需开拍卖行";
+          return;
+        }
+
+        const total = 2 + row.querySelectorAll(".mcell").length;
+        let done = 0;
+        btn.textContent = "查询中";
+        cell.className = "price wait";
+        const timer = setInterval(() => {
+          done++;
+          if (done < total) {
+            cell.textContent = `${done}/${total}`;
+            return;
+          }
+          clearInterval(timer);
+          btn.textContent = "查价";
+
+          const seed = Number(btn.dataset.i) + 5;
+
+          // 产物售价 → 商品名下方 (made > 1 时写整份的售价, 与盈亏口径一致)
+          const sell = (seed * 1370) % 9000 + 800;
+          const ps = row.querySelector(".psell");
+          if (ps) {
+            const made = Number(ps.dataset.made || 1) || 1;
+            ps.className = "psell";
+            ps.innerHTML = made > 1
+              ? "售价 " + matPriceHTML(sell, made, ps.clientWidth - 20)
+              : "售价 " + money(sell) + "/个";
+          }
+
+          // 材料金额 → 每格材料名下方 (数量 > 1 时显示整份的钱, 写法随格宽退化)
+          row.querySelectorAll(".mcell").forEach((mc, k) => {
+            const mp = mc.querySelector(".mprice");
+            if (!mp) return;
+            const cnt = Number(mc.dataset.cnt || 1) || 1;
+            const unit = (seed * 733 + k * 977) % 4000 + 150;
+            mp.className = "mprice";
+            mp.innerHTML = matPriceHTML(unit, cnt, mc.clientWidth);
+          });
+
+          const v = mockProfit(seed);
+          cell.className = "price " + (v > 0 ? "good" : v < 0 ? "bad" : "");
+          cell.textContent = v > 0 ? `盈 ${money(v)}` : v < 0 ? `亏 ${money(-v)}` : "持平";
+        }, 260);
+      };
+    });
   }
+
+  /* ---------- 行悬停提示 ----------
+     鼠标在行上时把完整标题和材料清单浮出来, 长名字被省略号截掉也能看全 */
+  const $tip = document.getElementById("tip");
+  let tipRow = null;
+
+  function placeTip(e) {
+    const pad = 14;
+    let x = e.clientX + pad;
+    let y = e.clientY + pad;
+    const w = $tip.offsetWidth, h = $tip.offsetHeight;
+    if (x + w > window.innerWidth - 8) x = e.clientX - w - pad;
+    if (y + h > window.innerHeight - 8) y = e.clientY - h - pad;
+    $tip.style.left = x + "px";
+    $tip.style.top = y + "px";
+  }
+
+  function showTip(row) {
+    const t = row._tip;
+    if (!t) return;
+    const html = [`<div class="t">${t.title}</div>`];
+    if (t.sub) html.push(`<div class="sub">${t.sub}</div>`);
+    if (t.mats && t.mats.length) {
+      html.push(...t.mats.map(([n, c]) =>
+        `<div class="mrow"><span>${n}</span><span>×${c}</span></div>`));
+    }
+    if (t.hint) html.push(`<div class="hint">${t.hint}</div>`);
+    $tip.innerHTML = html.join("");
+    $tip.classList.add("on");
+  }
+
+  $list.addEventListener("mousemove", e => {
+    const row = e.target.closest(".lrow");
+    if (row !== tipRow) {
+      tipRow = row;
+      if (row) showTip(row); else $tip.classList.remove("on");
+    }
+    if (row && $tip.classList.contains("on")) placeTip(e);
+  });
+  $list.addEventListener("mouseleave", () => {
+    tipRow = null;
+    $tip.classList.remove("on");
+  });
 
   $switch.onclick = () => {
     curMode = curMode === "list" ? "mats" : "list";
