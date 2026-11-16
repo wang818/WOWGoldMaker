@@ -51,6 +51,22 @@ function ns.Print(msg)
     print(PREFIX, msg)
 end
 
+-- 急救模块入口。FirstAid.lua 在 Core 之后加载, 所以这里必须运行时查找而不能缓存。
+-- 早期版本 Core 直接调 ns.FAReport (并不存在的名字), 结果是静默无反应 —— 现在缺模块
+-- 或生成失败都会明确报出来。
+function ns.RunFirstAid(mode)
+    local fa = ns.FirstAid
+    if type(fa) ~= "table" or type(fa.Report) ~= "function" then
+        ns.Print("|cffff5555急救模块未加载:|r ns.FirstAid 为 nil, 检查 FirstAid.lua 是否报错")
+        return
+    end
+    local ok, err = pcall(fa.Report, mode)
+    if not ok then
+        ns.Print("|cffff5555急救清单生成失败:|r " .. tostring(err))
+        pcall(geterrorhandler(), "WOWGoldMaker 急救清单生成失败: " .. tostring(err))
+    end
+end
+
 --------------------------------------------------------------------------- 事件
 
 local ev = CreateFrame("Frame")
@@ -113,7 +129,7 @@ SLASH_WOWGOLDMAKER1 = "/wgm"
 SLASH_WOWGOLDMAKER2 = "/goldmaker"
 
 SlashCmdList["WOWGOLDMAKER"] = function(msg)
-    msg = (msg or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
+    msg = (msg or ""):lower():gsub("^%s+", ""):gsub("%s+$", ""):gsub("%s+", " ")
 
     if msg == "show" then
         ns.UI.Show()
@@ -143,9 +159,9 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
         end
     elseif msg == "fa" or msg == "firstaid" or msg == "first-aid"
         or msg == "急救" then
-        if ns.FAReport then ns.FAReport() end
+        ns.RunFirstAid()
     elseif msg == "fa mats" or msg == "急救材料" then
-        if ns.FAReport then ns.FAReport("mats") end
+        ns.RunFirstAid("mats")
     elseif msg == "help" then
         ns.Print("命令列表:")
         print("  |cffe8c25a/wgm|r            打开 / 关闭主界面")
@@ -153,7 +169,7 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
         print("  |cffe8c25a/wgm hide|r       隐藏主界面")
         print("  |cffe8c25a/wgm reset|r      重置窗口位置")
         print("  |cffe8c25a/wgm config|r     打开游戏内设置页")
-        print("  |cffe8c25a/wgm fa|r         扫描急救配方与材料 (需先打开急救窗口)")
+        print("  |cffe8c25a/wgm fa|r         急救可生产清单 + 所需材料")
         print("  |cffe8c25a/wgm fa mats|r    只看材料汇总")
     else
         ns.UI.Toggle()

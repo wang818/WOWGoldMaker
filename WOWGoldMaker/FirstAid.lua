@@ -276,3 +276,36 @@ function FA.Report(mode)
     end
     say("|cff6f7783已存入 WOWGoldMakerDB.firstAid, 可离线导出。|r")
 end
+
+--------------------------------------------------------------------------- 名称预热
+
+-- 客户端的物品名称是按需懒加载的: 第一次 GetItemInfo 只发起请求、返回 nil。
+-- 不预热的话首次 /wgm fa 会满屏 "物品#ID"。登录后主动把 32 条配方涉及的物品
+-- 全部请求一遍, 等玩家真正敲命令时名称基本都已缓存好。
+local function PrewarmItemNames()
+    local ids, n = {}, 0
+    for _, row in ipairs(FA.BUILTIN) do
+        if row.item then ids[row.item] = true end
+        for _, m in ipairs(row.mats) do ids[m[1]] = true end
+    end
+    for id in pairs(ids) do
+        n = n + 1
+        if C_Item and C_Item.RequestLoadItemDataByID then
+            pcall(C_Item.RequestLoadItemDataByID, id)
+        end
+        if GetItemInfo then pcall(GetItemInfo, id) end
+    end
+    return n
+end
+
+do
+    local boot = CreateFrame("Frame")
+    boot:RegisterEvent("PLAYER_ENTERING_WORLD")
+    boot:SetScript("OnEvent", function(self)
+        self:UnregisterEvent("PLAYER_ENTERING_WORLD")
+        -- 两次: 第一次发起请求, 第二次捞取已回包的数据
+        C_Timer.After(1, function() pcall(PrewarmItemNames) end)
+        C_Timer.After(5, function() pcall(PrewarmItemNames) end)
+    end)
+end
+
