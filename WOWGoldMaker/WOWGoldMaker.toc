@@ -12,4 +12,5 @@
 Theme.lua
 Core.lua
 Settings.lua
+FirstAid.lua
 UI.lua

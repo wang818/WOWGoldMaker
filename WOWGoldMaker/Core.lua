@@ -141,6 +141,11 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
                 print("|cffff5555[WGM 数据]|r 刷新未产生数据, 输 /wgm debug 看详情")
             end
         end
+    elseif msg == "fa" or msg == "firstaid" or msg == "first-aid"
+        or msg == "急救" then
+        if ns.FAReport then ns.FAReport() end
+    elseif msg == "fa mats" or msg == "急救材料" then
+        if ns.FAReport then ns.FAReport("mats") end
     elseif msg == "help" then
         ns.Print("命令列表:")
         print("  |cffe8c25a/wgm|r            打开 / 关闭主界面")
@@ -148,6 +153,8 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
         print("  |cffe8c25a/wgm hide|r       隐藏主界面")
         print("  |cffe8c25a/wgm reset|r      重置窗口位置")
         print("  |cffe8c25a/wgm config|r     打开游戏内设置页")
+        print("  |cffe8c25a/wgm fa|r         扫描急救配方与材料 (需先打开急救窗口)")
+        print("  |cffe8c25a/wgm fa mats|r    只看材料汇总")
     else
         ns.UI.Toggle()
     end
