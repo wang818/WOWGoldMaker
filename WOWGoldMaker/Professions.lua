@@ -56,21 +56,53 @@ local function itemTexture(id)
     return nil
 end
 
+--------------------------------------------------------------------------- 专业页签图标
+
+-- 截图里那两个图标是"专业页签"(SkillLine)图标, 既不是法术图标也不是物品图标。
+-- GetProfessionInfo(index) 的返回值:
+--   name, icon, rank, maxRank, numSpells, offset, skillLineID
+-- 其中 icon 就是角色专业页里显示的那个图标 (EllesmereUIQuickdraw 同样用它)。
+-- index 来自 GetProfessions(), 所以只能拿到"角色已学"的专业。
+local skillLineIcon = {}   -- skillLineID -> icon
+local nameIcon      = {}   -- 本地化专业名 -> icon
+
+local function RefreshProfessionIcons()
+    if type(GetProfessions) ~= "function" or type(GetProfessionInfo) ~= "function" then
+        return false
+    end
+    local ok, list = pcall(GetProfessions)
+    if not ok or type(list) ~= "table" then return false end
+
+    local found = false
+    for _, idx in pairs(list) do
+        local ok2, nm, ic, _, _, _, _, sk = pcall(GetProfessionInfo, idx)
+        if ok2 and ic then
+            if sk then skillLineIcon[sk] = ic end
+            if nm then nameIcon[nm] = ic end
+            found = true
+        end
+    end
+    return found
+end
+
 --------------------------------------------------------------------------- 专业注册表
 
 -- iconSpell / iconItem 只用于"这个专业的代表图标", 不参与配方数据。
+-- skillLine 是专业页签的 SkillLine ID (急救 129 / 烹饪 185), 优先用它取游戏内图标。
 P.LIST = {
     {
         key       = "first-aid",
         name      = "急救",
-        iconSpell = 3275,      -- 亚麻绷带 → 绷带图标
+        skillLine = 129,
+        iconSpell = 3275,      -- 亚麻绷带 → 绷带图标 (页签图标取不到时兜底)
         iconItem  = 1251,      -- 亚麻绷带 (物品)
         note      = "绷带 · 药膏 · 解毒",
     },
     {
         key       = "cooking",
         name      = "烹饪",
-        iconSpell = 2538,      -- 焦狼肉 → 熟食图标
+        skillLine = 185,
+        iconSpell = 2538,      -- 焦狼肉 → 熟食图标 (兜底)
         iconItem  = 6290,
         note      = "食物 · 饮料 · 增益",
     },
@@ -91,6 +123,16 @@ function P.Icon(key)
     local p = P.byKey[key]
     if not p then return QUESTION end
 
+    -- 索引为空说明还没扫过 (角色进世界/切换专精时刷新), 先补一次
+    if not next(skillLineIcon) and not next(nameIcon) then
+        pcall(RefreshProfessionIcons)
+    end
+
+    -- 1) 专业页签图标: 与游戏内专业页显示的完全同一个贴图
+    local tabIcon = (p.skillLine and skillLineIcon[p.skillLine]) or nameIcon[p.name]
+    if tabIcon then iconCache[key] = tabIcon; return tabIcon end
+
+    -- 2) 法术贴图 → 3) 首条配方法术 → 4) 物品图标 → 5) 首条配方产物
     local data  = ns.ProfData and ns.ProfData[key]
     local first = data and data[1]
 
@@ -109,6 +151,13 @@ function P.Icon(key)
     return QUESTION
 end
 
+-- 专业变化 (学新专业/遗忘/洗点) 后重新取图标
+P.RefreshIcons = function()
+    pcall(RefreshProfessionIcons)
+    for k in pairs(iconCache) do iconCache[k] = nil end
+    if ns.UI and ns.UI.RefreshProfIcons then pcall(ns.UI.RefreshProfIcons) end
+end
+
 -- 配方行的物品图标 (拿不到返回 nil, 调用方自行决定隐藏)
 local itemIconCache = {}
 function P.ItemIcon(id)
@@ -122,11 +171,25 @@ end
 
 -- 图标诊断: /wgm icons
 function P.DebugIcons()
-    ns.Print("图标解析结果 (问号 = 客户端该贴图不存在或数据未到):")
+    ns.Print("角色已学专业 (GetProfessionInfo, 第2个返回值就是专业页图标):")
+    local list = (type(GetProfessions) == "function") and GetProfessions() or nil
+    if type(list) == "table" and next(list) then
+        for _, idx in pairs(list) do
+            local nm, ic, rk, mx, _, _, sk = GetProfessionInfo(idx)
+            print(format("    idx=%s  %s  图标=%s  技能=%s/%s  skillLine=%s",
+                tostring(idx), tostring(nm), tostring(ic),
+                tostring(rk), tostring(mx), tostring(sk)))
+        end
+    else
+        print("    (没取到 —— 角色可能还没学专业)")
+    end
+
+    ns.Print("各专业解析链 (页签 → 法术 → 配方法术 → 物品 → 最终):")
     for _, p in ipairs(P.LIST) do
         local data  = ns.ProfData and ns.ProfData[p.key]
         local first = data and data[1]
-        print(format("  |cffe8c25a%s|r", p.name))
+        print(format("  |cffe8c25a%s|r (skillLine=%s)", p.name, tostring(p.skillLine)))
+        print(format("    页签图标 → %s", tostring(skillLineIcon[p.skillLine] or nameIcon[p.name])))
         print(format("    法术 %s → %s", tostring(p.iconSpell), tostring(spellTexture(p.iconSpell))))
         print(format("    配方法术 %s → %s", tostring(first and first.spell), tostring(first and spellTexture(first.spell))))
         print(format("    物品 %s → %s", tostring(p.iconItem), tostring(itemTexture(p.iconItem))))
@@ -333,5 +396,20 @@ do
         self:UnregisterEvent("PLAYER_ENTERING_WORLD")
         C_Timer.After(1, function() pcall(P.Prewarm) end)
         C_Timer.After(6, function() pcall(P.Prewarm) end)
+    end)
+end
+
+-- 页签图标索引: 登录/进世界/专业变动时重建
+do
+    local ev = CreateFrame("Frame")
+    ev:RegisterEvent("PLAYER_LOGIN")
+    ev:RegisterEvent("PLAYER_ENTERING_WORLD")
+    ev:RegisterEvent("SKILL_LINES_CHANGED")
+    ev:SetScript("OnEvent", function(_, event)
+        if event == "PLAYER_LOGIN" then
+            pcall(RefreshProfessionIcons)
+        else
+            pcall(P.RefreshIcons)
+        end
     end)
 end

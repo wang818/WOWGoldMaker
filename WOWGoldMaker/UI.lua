@@ -625,6 +625,13 @@ function ns.UI.ApplyPosition()
         db.pos.x, db.pos.y)
 end
 
+-- 供 Professions.lua 在"专业变化"后回调, 重新落地卡片图标
+function ns.UI.RefreshProfIcons()
+    iconsPending = true
+    iconsTries = 0
+    return RefreshProfIcons()
+end
+
 function ns.UI.Show()
     if not frame then return end
     SafeStep(function() ns.UI.ApplyPosition() end, "ApplyPosition")
