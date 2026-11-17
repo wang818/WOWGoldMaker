@@ -214,6 +214,10 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
             ns.Print("用法: /wgm search <物品ID>  (等同左键点列表里的这件物品)")
         elseif ns.UI and ns.UI.SearchInAH then
             ns.UI.SearchInAH(id)
+            -- 顺带把这条路的体检打出来: 点了没反应的时候不用来回问
+            if ns.Auction and ns.Auction.SearchDiag then
+                C_Timer.After(2.5, function() ns.Auction.SearchDiag(id) end)
+            end
         else
             ns.Print("|cffff5555界面模块未加载|r")
         end

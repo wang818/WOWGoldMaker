@@ -807,17 +807,43 @@ function AH.SearchBox()
     return nil
 end
 
+-- 填搜索框 + 点「搜索」按钮 —— 这就是玩家自己敲名字回车走的那条路。
+-- 为什么不自己拼 browse query: 那张查询表是客户端 UI 在点击时用它自己的一整套字段
+-- 现拼的, 手拼的表哪怕只差一个字段, 拍卖行也照收不误却回 0 条, 界面上只留一句
+-- 「未发现物品」—— 看着像插件坏了, 实际是查询根本不匹配。让 UI 自己拼就不会错。
+local function ClickSearch(sb, text)
+    -- 搜索框: 现代是 SearchBar.SearchBox, 有的版本直接把 SetText 挂在 SearchBar 上
+    local box = sb.SearchBox or sb
+    if type(box.SetText) == "function" then
+        pcall(box.SetText, box, text)
+    elseif type(sb.SetText) == "function" then
+        pcall(sb.SetText, sb, text)
+    end
+
+    -- 搜索框空着的时候按钮是灰的, 点下去等于没点, 先强行启用
+    local btn = sb.SearchButton
+    if btn and type(btn.Click) == "function" then
+        if type(btn.Enable) == "function" then pcall(btn.Enable, btn) end
+        if pcall(btn.Click, btn) then return true, "按钮" end
+    end
+    if type(sb.OnSearchButtonClicked) == "function"
+        and pcall(sb.OnSearchButtonClicked, sb) then
+        return true, "按钮回调"
+    end
+    if type(sb.OnEnterPressed) == "function" and pcall(sb.OnEnterPressed, sb) then
+        return true, "回车"
+    end
+    return false
+end
+
 -- 点物品 → 在拍卖行里「搜索这件东西」。
---   走 SendBrowseQuery: 这正是玩家把名字敲进搜索框回车走的那条路, 结果直接落到
---   拍卖行窗口自己的挂单列表里, 玩家还能接着改条件。
---   失败再退回 SendSearchQuery (按 itemKey 精确查这一件): 结果同样显示在拍卖行窗口,
---   只是搜索框里的词未必对得上。
---   不用 exactMatch: 宁可多列几个名字相近的, 也别因为名字有一个字不同就搜出个空列表
---   —— 玩家只会以为插件坏了。
--- 返回 true, 搜索词 / false, 原因
+--   1. 首选: 填搜索框 + 点搜索按钮 (玩家的路, 查询表由 UI 自己拼, 不会不匹配)
+--   2. 再退: 直接发 browse query (老式客户端, 或者按钮点了没动静)
+--   3. 最后: 按 itemKey 精确查 —— 查价走的就是这条, 一定通; 只是结果不经过搜索框
+-- 不用 exactMatch: 宁可多列几个名字相近的, 也别因为一个字不同就给个空列表
+-- 返回 true, 搜索词, 走的路 / false, 原因
 function AH.Search(itemID, name)
     if not itemID then return false, "没有物品 ID" end
-    -- 搜索本身只要 SendBrowseQuery / SendSearchQuery 其中之一, 不需要读结果的接口
     local api = _G.C_AuctionHouse
     if type(api) ~= "table"
         or (type(api.SendBrowseQuery) ~= "function" and type(api.SendSearchQuery) ~= "function") then
@@ -831,17 +857,18 @@ function AH.Search(itemID, name)
     -- 连点两下别发两条 (拍卖行有频率上限, 而且第二条会顶掉第一条的结果)
     local t = (type(GetTime) == "function" and GetTime()) or 0
     if lastSearch and lastSearch.id == itemID and (t - lastSearch.at) < 1 then
-        return true, text
+        return true, text, "连点去重"
     end
 
-    -- 搜索框里也填上: 玩家能接着改条件, 直接回车就是重新搜一次
+    local ok, way, err = false, nil, nil
+
     local sb = AH.SearchBox()
-    if sb then pcall(sb.SetText, sb, text) end
+    if sb then
+        local fired, how = ClickSearch(sb, text)
+        if fired then ok, way = true, "搜索栏" .. (how and ("(" .. how .. ")") or "") end
+    end
 
-    local sorts = SortList()
-    local ok, err = false, nil
-
-    if type(api.SendBrowseQuery) == "function" then
+    if not ok and type(api.SendBrowseQuery) == "function" then
         local q = {
             searchString     = text,
             minLevel         = 0,
@@ -849,17 +876,19 @@ function AH.Search(itemID, name)
             itemClassFilters = {},
             usableOnly       = false,
             exactMatch       = false,
-            sorts            = sorts,
+            sorts            = SortList(),
         }
         ok, err = pcall(api.SendBrowseQuery, q)
         if not ok then
             -- 有的版本把 sorts 放在第二个参数上
-            ok, err = pcall(api.SendBrowseQuery, q, sorts)
+            ok, err = pcall(api.SendBrowseQuery, q, SortList())
         end
+        if ok then way = "browse 查询" end
     end
 
-    if not ok then
-        ok, err = pcall(api.SendSearchQuery, ItemKey(itemID), sorts, false)
+    if not ok and type(api.SendSearchQuery) == "function" then
+        ok, err = pcall(api.SendSearchQuery, ItemKey(itemID), SortList(), false)
+        if ok then way = "itemKey 查询" end
     end
 
     if not ok then
@@ -872,6 +901,84 @@ function AH.Search(itemID, name)
         return false, "搜索失败: " .. msg
     end
 
-    lastSearch = { id = itemID, at = t }
-    return true, text
+    lastSearch = { id = itemID, at = t, way = way, text = text }
+    return true, text, way
+end
+
+-- 搜索发出后回读条数: 界面到底有没有东西, 用数字说话。
+-- 「未发现物品」既可能是真没人卖, 也可能是查询压根没被认 —— 这两种得分开。
+-- 返回 单件条数, 商品条数, 浏览结果条数 (拿不到的给 nil)
+function AH.SearchCount(itemID)
+    local c = AHAPI()
+    if not (c and itemID) then return nil end
+
+    local item = tonumber(CallID(c.GetNumItemSearchResults, ItemKey(itemID)))
+    local comm = tonumber(CallID(c.GetNumCommoditySearchResults, itemID))
+
+    local browse
+    if type(c.GetBrowseResults) == "function" then
+        local ok, res = pcall(c.GetBrowseResults)
+        if ok then
+            if type(res) == "table" then
+                browse = #res
+            elseif type(res) == "number" then
+                browse = res
+            end
+        end
+        if browse == nil then
+            -- 有些版本是一次一条: GetBrowseResults(i)
+            browse = 0
+            for i = 1, 200 do
+                local ok2, row = pcall(c.GetBrowseResults, i)
+                if not (ok2 and row) then break end
+                browse = browse + 1
+            end
+        end
+    end
+
+    return item, comm, browse
+end
+
+-- 搜索这条路的体检: 哪一环通、哪一环不通, 一条条列出来。
+-- 界面上只回一句「未发现物品」的时候, 靠这个分清「没搜出去」和「真没人卖」。
+function AH.SearchDiag(itemID)
+    itemID = tonumber(itemID)
+    ns.Print("拍卖行搜索诊断 · 物品 #" .. tostring(itemID))
+
+    local c = _G.C_AuctionHouse
+    local function has(n)
+        return (type(c) == "table" and type(c[n]) == "function")
+            and "|cff5ad46a有|r" or "|cffff5555无|r"
+    end
+
+    print("  API: SendBrowseQuery=" .. has("SendBrowseQuery")
+        .. " SendSearchQuery=" .. has("SendSearchQuery")
+        .. " GetBrowseResults=" .. has("GetBrowseResults"))
+    print("  窗口: " .. (AHOpen() and "已打开" or "|cffff5555未打开|r")
+        .. "   物品名: " .. tostring(ItemName(itemID) or "?"))
+
+    local sb, how = AH.SearchBox()
+    if sb then
+        local box = sb.SearchBox or sb
+        print("  搜索栏: " .. tostring(how)
+            .. "   搜索框=" .. (sb.SearchBox and "有" or "无(直接挂在栏上)")
+            .. "   按钮=" .. (sb.SearchButton and "有" or "|cffff5555无|r")
+            .. "   能填字=" .. (type(box.SetText) == "function" and "是" or "|cffff5555否|r"))
+    else
+        print("  搜索栏: |cffff5555没找到|r (只能直接发查询, 窗口里不会有回填的名字)")
+    end
+
+    if lastSearch and lastSearch.id == itemID then
+        print("  上次搜索: 「" .. tostring(lastSearch.text) .. "」走的是 "
+            .. tostring(lastSearch.way))
+    end
+
+    local item, comm, browse = AH.SearchCount(itemID)
+    print(format("  结果: 单件=%s 商品=%s 浏览=%s",
+        tostring(item), tostring(comm), tostring(browse)))
+    if type(c) == "table" and type(c.HasSearchResults) == "function" then
+        local ok, v = pcall(c.HasSearchResults)
+        print("  HasSearchResults: " .. (ok and tostring(v) or "调用失败"))
+    end
+    print("  |cff8a929e三个都是 0 而拍卖行里明明有这件东西 → 把这几行整段发我|r")
 end

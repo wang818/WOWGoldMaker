@@ -1692,9 +1692,28 @@ function ns.UI.SearchInAH(itemID, name)
     if not itemID then return end
 
     AH.AwaitIdle(function()
-        local ok, info = AH.Search(itemID, name)
+        local ok, info, way = AH.Search(itemID, name)
         if ok then
             Say(format("拍卖行已搜索: %s", tostring(info)), 2.5)
+
+            -- 一秒后回读条数: 界面上没东西的时候, 得让玩家知道是「真没人卖」
+            -- 还是「搜索没被认」。搜索栏回填了名字、列表却空着的, 基本是后者。
+            C_Timer.After(1.2, function()
+                local item, comm, browse = AH.SearchCount(itemID)
+                local n = (item or 0) + (comm or 0)
+                local any = n > 0 or (browse or 0) > 0
+                if any then
+                    if way and way ~= "搜索栏(按钮)" then
+                        Say(format("搜到 %d 条 (走的是%s)", math.max(n, browse or 0), tostring(way)), 3)
+                    end
+                    return
+                end
+                if way == "搜索栏(按钮)" then
+                    Say("拍卖行返回 0 条 · 这件东西现在没人卖; 若别的物品也这样, /wgm search <ID> 看诊断", 6)
+                else
+                    Say("拍卖行返回 0 条 (走的" .. tostring(way) .. ") · /wgm search <ID> 看诊断", 6)
+                end
+            end)
         elseif info == "拍卖行未打开" then
             Say("拍卖行没打开 · 打开拍卖行窗口后, 点物品就能直接搜它", 4.5)
         elseif info == "物品名还没读到" then
