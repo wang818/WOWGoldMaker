@@ -27,6 +27,7 @@ local DEFAULTS = {
     strata     = "DIALOG",                                -- 主面板层级 (DIALOG = 压在 EllesmereUI 上层)
     prices     = {},                                      -- 拍卖行价格缓存: itemID -> { unit, n, ts }
     npcBuy     = {},                                      -- NPC 购买价 (手动录入): itemID -> 铜
+    tipExtra   = false,                                   -- 悬停是否附带配方/单价/盈亏 (默认只显示物品原来的介绍)
 }
 
 local db
@@ -216,8 +217,24 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
     elseif msg == "npc clear" or msg == "npc 清空" then
         local n = (ns.NPC and ns.NPC.ClearBuy()) or 0
         ns.Print(format("已清空 %d 条 NPC 购买价", n))
-    elseif msg == "strata" or msg == "层级" then
-        local cur, live = ns.UI.ApplyStrata()
+    elseif msg == "tip extra" or msg == "提示 额外" then
+        -- 悬停默认只给物品原来的介绍 (和背包一致); 这里开/关我们自己的那些行
+        local d = ns.DB()
+        d.tipExtra = not d.tipExtra
+        if d.tipExtra then
+            ns.Print("悬停: |cff29c7a8物品介绍 + 配方 / 单价 / 盈亏 / NPC 价|r")
+        else
+            ns.Print("悬停: |cff8a929e只显示物品原来的介绍|r")
+        end
+    elseif msg:match("^tip") or msg:match("^物品") then
+        -- 物品提示里为什么只有名字: 逐项打印接口形态 / 名称 / 链接 / 每种取法的行数
+        local id = tonumber(msg:match("(%d+)") or "")
+        if ns.UI and ns.UI.DebugItemTip then
+            ns.UI.DebugItemTip(id)
+        else
+            ns.Print("|cffff5555界面模块未加载|r")
+        end
+    elseif msg == "strata" or msg == "层级" then        local cur, live = ns.UI.ApplyStrata()
         ns.Print("当前层级: " .. cur .. (live and "" or " (面板未创建, 登录后生效)"))
         print("  |cff8a929e可选: background / low / medium / high / dialog / fullscreen / fullscreen_dialog / tooltip|r")
         print("  |cff8a929e默认 DIALOG: 压在 EllesmereUI (快捷操作层/背包) 上面, 全屏弹窗仍在其上|r")
@@ -249,6 +266,8 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
         print("  |cffe8c25a/wgm ah clear|r   清空价格缓存")
         print("  |cffe8c25a/wgm npc|r        已记录的 NPC 购买价条数")
         print("  |cffe8c25a/wgm npc clear|r  清空手动录入的 NPC 购买价")
+        print("  |cffe8c25a/wgm tip <ID>|r   诊断物品提示 (为什么只有名字 / 没有描述)")
+        print("  |cffe8c25a/wgm tip extra|r  悬停改成「物品介绍 + 配方/价格」, 再输一次关掉")
         print("  |cffe8c25a/wgm strata|r     显示/切换面板层级 (默认 DIALOG, 压在 EllesmereUI 上层)")
         print("  |cffe8c25a/wgm strata medium|r  降到 MEDIUM (待在背包下面)")
         print("  |cffe8c25a/wgm strata tooltip|r 升到 TOOLTIP (压住全屏弹窗)")

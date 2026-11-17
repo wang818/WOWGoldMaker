@@ -38,7 +38,10 @@ local askedAt   = {}    -- itemID -> 上次向客户端要数据的时间
 local function RequestItem(id)
     if C_Item and type(C_Item.RequestLoadItemDataByID) == "function" then
         pcall(C_Item.RequestLoadItemDataByID, id)
-    elseif type(GetItemInfo) == "function" then
+    end
+    -- 有的客户端没有上面那个函数, 或者它不真的发包; 顺手再查一次老的 GetItemInfo,
+    -- 它在没缓存时会自己去服务器要 (有 2 秒节流兜着, 不会造成请求风暴)
+    if type(GetItemInfo) == "function" then
         pcall(GetItemInfo, id)
     end
 end
@@ -125,6 +128,48 @@ end
 function NPC.ResetSell()
     for k in pairs(sellCache) do sellCache[k] = nil end
     for k in pairs(askedAt) do askedAt[k] = nil end
+end
+
+--------------------------------------------------------------------------- 物品基础信息
+
+-- 名称 + 链接。链接是给 GameTooltip:SetHyperlink 用的: 只有带上完整链接, 客户端才会
+-- 把「用途 / 使用效果 / 描述 / 售价」那些行一起吐出来; 很多客户端上光给 itemID
+-- (SetItemByID) 只出一行名字, 这也是插件里看不到「这物品是干什么的」的常见原因。
+function NPC.Info(id)
+    if type(id) ~= "number" or id <= 0 then return nil end
+
+    local name, link
+    local function take(v, l)
+        if type(v) == "table" then
+            local n = v.itemName or v.name
+            if type(n) == "string" and n ~= "" then name = name or n end
+            local k = v.itemLink or v.itemHyperlink
+            if type(k) == "string" and k ~= "" then link = link or k end
+        elseif type(v) == "string" and v ~= "" then
+            name = name or v
+            if type(l) == "string" and l ~= "" then link = link or l end
+        end
+    end
+
+    if C_Item and type(C_Item.GetItemInfo) == "function" then
+        local ok, a, b = pcall(C_Item.GetItemInfo, id)
+        if ok then take(a, b) end
+    end
+    if type(GetItemInfo) == "function" and (not name or not link) then
+        local ok, a, b = pcall(GetItemInfo, id)
+        if ok then take(a, b) end
+    end
+
+    if name or link then return name, link end
+
+    -- 还没有数据: 顺手向客户端要一次 (同一个物品 2 秒内只请求一次)。
+    -- 悬停时调用, 于是第一次悬停可能只有名字, 数据回包后再悬停就全了 (UI 那边会重试一次)。
+    local now = GetTime()
+    if not askedAt[id] or now - askedAt[id] > 2 then
+        askedAt[id] = now
+        RequestItem(id)
+    end
+    return nil
 end
 
 --------------------------------------------------------------------------- 从商人买 (手动录入)

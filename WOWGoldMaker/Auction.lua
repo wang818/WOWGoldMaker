@@ -48,7 +48,7 @@ local function Now()
     return (type(time) == "function" and time()) or 0
 end
 
--- 铜 → 简短中文金额 (12金34银 / 3银 / 45铜)
+-- 铜 → 简短中文金额 (12金34银 / 3银 / 45铜)。会丢掉铜位, 用在「够看就行」的地方。
 function AH.Money(copper)
     local c = math.floor(math.abs(tonumber(copper) or 0))
     local g = math.floor(c / 10000)
@@ -64,6 +64,26 @@ function AH.Money(copper)
     end
     if s > 0 then return format("%d银", s) end
     return format("%d铜", c)
+end
+
+-- 铜 → 精确到 1 铜的金额 (1金23银45铜)。盈亏用它: 1金 = 100银 = 100铜,
+-- 所有计算都是整数铜, 显示也不该把铜位四舍五入掉 (差 99 铜也是差)。
+function AH.MoneyEx(copper)
+    local c = math.floor(math.abs(tonumber(copper) or 0))
+    local g = math.floor(c / 10000)
+    local s = math.floor((c % 10000) / 100)
+    local k = c % 100
+    if g >= 100000 then
+        -- 十万金以上才用「万」缩写, 且四舍五入到 0.1 万金 = 1000 金, 已经无法精确到铜,
+        -- 前面加 ≈ 让「这是约数」看得出来
+        return format("≈%.1f万金", g / 10000)
+    end
+    local parts = {}
+    if g > 0 then parts[#parts + 1] = format("%d金", g) end
+    if s > 0 then parts[#parts + 1] = format("%d银", s) end
+    -- 有金/银时, 铜为 0 就不写; 只有铜时一定要写
+    if k > 0 or #parts == 0 then parts[#parts + 1] = format("%d铜", k) end
+    return table.concat(parts)
 end
 
 local function Cache()
@@ -278,8 +298,19 @@ local function Calculate(rec, res)
         why[#why + 1] = { name = nm, id = rec.item, reason = (prod and prod.reason) or "无挂单" }
     end
 
-    local net = revenue and revenue * (1 - CUT) or nil
+    -- 抽成算完取整到铜: 游戏里收的是整铜, 结果带 0.95 个铜没有意义,
+    -- 而且盈亏是给玩家看的数, 内部留着小数容易和显示的金额对不上
+    local net = revenue and math.floor(revenue * (1 - CUT)) or nil
     local profit = (net and #missing == 0) and (net - cost) or nil
+
+    -- NPC 保底口径: 成本不动 (材料照拍卖行价买), 收入换成把成品卖给商人。
+    -- 两个盈亏放在一起看, 才能回答「这批货卖玩家还是直接甩商人」;
+    -- 材料成本两边共用, 所以差的只是销售渠道。
+    local NPC = ns.NPC
+    local npcUnit = (NPC and NPC.Sell) and NPC.Sell(rec.item) or nil
+    local npcKnown = (NPC and NPC.SellKnown) and NPC.SellKnown(rec.item) or false
+    local npcRevenue = npcUnit and (npcUnit * made) or nil
+    local npcProfit = (npcRevenue and #missing == 0) and (npcRevenue - cost) or nil
 
     return {
         rec     = rec,
@@ -290,6 +321,11 @@ local function Calculate(rec, res)
         net     = net,
         cost    = cost,
         profit  = profit,
+        -- NPC 一侧: unit 是收购单价, known 区分「还没读到」和「商人不要这件东西」
+        npcUnit    = npcUnit,
+        npcKnown   = npcKnown,
+        npcRevenue = npcRevenue,
+        npcProfit  = npcProfit,
         missing = missing,
         why     = why,
     }
@@ -570,8 +606,19 @@ function AH.Report(out)
     local sign = out.profit >= 0
     local color = sign and "|cff66cc73" or "|cffeb6b6b"
     ns.Print(format("|cffe8c25a[查价]|r %s → %s%s%s|r  (收 %s · 本 %s)",
-        name, color, sign and "盈 " or "亏 ", AH.Money(math.abs(out.profit)),
-        AH.Money(out.net or 0), AH.Money(out.cost or 0)))
+        name, color, sign and "盈 " or "亏 ", AH.MoneyEx(math.abs(out.profit)),
+        AH.MoneyEx(out.net or 0), AH.MoneyEx(out.cost or 0)))
+
+    -- NPC 那一档跟着播一行: 拍卖行亏但商人赚的时候, 这单其实还能做
+    if out.npcProfit then
+        local ok = out.npcProfit >= 0
+        local c2 = ok and "|cff66cc73" or "|cffeb6b6b"
+        ns.Print(format("|cffe8c25a[查价]|r %s → NPC %s%s%s|r  (商人收 %s)",
+            name, c2, ok and "盈 " or "亏 ", AH.MoneyEx(math.abs(out.npcProfit)),
+            AH.MoneyEx(out.npcRevenue or 0)))
+    elseif out.npcKnown then
+        ns.Print(format("|cffe8c25a[查价]|r %s → NPC 商人收不了这个", name))
+    end
 end
 
 function AH.Debug()

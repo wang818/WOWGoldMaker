@@ -284,6 +284,11 @@
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .mlines .mname.dim { color: #8a929e; }
+  /* 需要几个 (×3): 单独一列, 长名字也不会把它挤掉 */
+  .mlines .mcnt {
+    flex: 0 0 24px; margin-left: 2px; text-align: right; font-size: 7px;
+    color: var(--faint); white-space: nowrap;
+  }
   /* NPC 两列: 卖价 (客户端自带, 只读) + 买价 (玩家手记, 可点) */
   .mlines .mnpc {
     flex: 0 0 54px; margin-left: 2px; text-align: right; font-size: 7px;
@@ -309,15 +314,20 @@
   }
   .blk .req.gold { color: var(--gold); font-weight: 700; }
 
-  /* 价格列 + 查价按钮 */
-  .blk .price {
-    flex: 0 0 var(--pw, 66px); text-align: right; font-size: 8px;
-    color: var(--faint); white-space: nowrap; overflow: hidden;
+  /* 价格列 + 查价按钮: 两行盈亏 (上 = 拍卖行, 下 = NPC) */
+  .blk .prices {
+    flex: 0 0 var(--pw, 78px); display: flex; flex-direction: column;
+    align-items: flex-end; justify-content: center; gap: 1px;
+    line-height: 1.1;
   }
-  .blk .price.good { color: var(--green); font-weight: 600; }
-  .blk .price.bad  { color: var(--red); font-weight: 600; }
-  .blk .price.gold { color: var(--gold); }
-  .blk .price.wait { color: var(--gold); }
+  .blk .price, .blk .npcprice {
+    font-size: 8px; color: var(--faint); white-space: nowrap; overflow: hidden;
+    max-width: 100%;
+  }
+  .blk .price.good, .blk .npcprice.good { color: var(--green); font-weight: 600; }
+  .blk .price.bad, .blk .npcprice.bad  { color: var(--red); font-weight: 600; }
+  .blk .price.gold, .blk .npcprice.gold { color: var(--gold); }
+  .blk .price.wait, .blk .npcprice.wait { color: var(--gold); }
   .blk .qbtn {
     flex: 0 0 40px; height: 14px; border-radius: 4px;
     background: rgba(255,255,255,.10);
@@ -390,7 +400,7 @@
 </head>
 <body>
 
-<h1><b>WOWGOLDMAKER</b> · 单页预览 (v0.6.1)</h1>
+<h1><b>WOWGOLDMAKER</b> · 单页预览 (v0.6.7)</h1>
 
 <div class="window">
   <div class="shadow"></div>
@@ -448,11 +458,12 @@
 
 <div class="demo">
   <label><input type="checkbox" id="ahOpen"> 模拟：拍卖行窗口已打开</label>
+  <label><input type="checkbox" id="tipExtra"> 悬停附带配方/价格（默认关，游戏里用 /wgm tip extra 切换）</label>
   <span>未勾选时点「查价」→ 面板内浮层提示（不写聊天框）</span>
 </div>
 
 <div class="settings">
-  <h2><span>金币工坊</span> v0.6.1</h2>
+  <h2><span>金币工坊</span> v0.6.7</h2>
   <div class="sub">魔兽世界无限服 · 金币工具箱</div>
   <hr>
   <div class="row on" id="row1"><div class="box"><span class="check">✓</span></div><span class="lbl">登录后自动呼出主界面</span></div>
@@ -533,6 +544,16 @@
   let curKey = "first-aid", curMode = "list";
   const $ahOpen = document.getElementById("ahOpen");
 
+  /* 悬停是否附带配方/价格 (对应存档里的 db.tipExtra, 游戏里默认关) */
+  const $tipExtra = document.getElementById("tipExtra");
+  let tipExtra = new URLSearchParams(location.search).get("extra") === "1";
+  $tipExtra.checked = tipExtra;
+  $tipExtra.addEventListener("change", () => {
+    tipExtra = $tipExtra.checked;
+    $tip.classList.remove("on");       // 收起, 下次移动鼠标按新设置重新生成
+    tipTarget = null;
+  });
+
   const $tabs = document.getElementById("tabs");
   const $list = document.getElementById("list");
   const $switch = document.getElementById("switchBtn");
@@ -576,6 +597,7 @@
       return `<div class="mline" data-cnt="${c}" data-n="${n}">
          <i class="mico"></i>
          <div class="mname">${n}</div>
+         <div class="mcnt">×${c}</div>
          <div class="mnpc">卖 ${money(npcSellOf(n))}</div>
          <div class="mbuy${buy ? "" : " empty"}">${buy ? "买 " + money(buy) : "＋买价"}</div>
          <div class="mprice"></div>
@@ -592,6 +614,20 @@
     if (g > 0) return s > 0 && g < 1000 ? `${g}金${s}银` : `${g}金`;
     if (s > 0) return `${s}银`;
     return `${c}铜`;
+  }
+
+  /* 精确到 1 铜 (对应 AH.MoneyEx): 1金 = 100银 = 100铜, 铜位不四舍五入掉 */
+  function moneyEx(c) {
+    c = Math.abs(Math.round(c));
+    const g = Math.floor(c / 10000);
+    const s = Math.floor((c % 10000) / 100);
+    const k = c % 100;
+    if (g >= 100000) return "≈" + (g / 10000).toFixed(1) + "万金";
+    const parts = [];
+    if (g > 0) parts.push(g + "金");
+    if (s > 0) parts.push(s + "银");
+    if (k > 0 || parts.length === 0) parts.push(k + "铜");
+    return parts.join("");
   }
 
   /* 材料行金额: 与 UI.lua 的 MatPriceText 同一套分档 ——
@@ -619,18 +655,13 @@
     return t;
   }
 
-  /* 示例盈亏 (铜): 一部分盈利一部分亏本, 纯演示用 */
-  function mockProfit(i) {
-    if (i % 4 === 3) return -((i * 137) % 4200 + 300);
-    if (i % 4 === 0) return 0;
-    return (i * 289) % 9000 + 200;
-  }
-
-  function priceHTML(p) {
-    if (p === null || p === undefined) return `<div class="price"></div>`;
-    if (p > 0) return `<div class="price good">盈 ${money(p)}</div>`;
-    if (p < 0) return `<div class="price bad">亏 ${money(-p)}</div>`;
-    return `<div class="price">持平</div>`;
+  /* 一行盈亏 (拍卖行 / NPC 共用): "AH 盈1金23银45铜" */
+  function plHTML(label, v) {
+    if (v === null || v === undefined) return "";
+    const cls = v > 0 ? "good" : v < 0 ? "bad" : "";
+    const word = v > 0 ? "盈" : v < 0 ? "亏" : "持平";
+    const val = v === 0 ? "" : moneyEx(v);
+    return `<div class="${label === "AH" ? "price" : "npcprice"} ${cls}">${label} ${word}${val}</div>`;
   }
 
   function renderTabs() {
@@ -661,7 +692,7 @@
               <div class="psell">单价 ${money(unit)}/个</div>
             </div>
             <div class="req gold">×${c}</div>
-            <div class="price gold">共 ${money(unit * c)}</div>
+            <div class="prices"><div class="price gold">共 ${moneyEx(unit * c)}</div><div class="npcprice"></div></div>
             <div class="qbtn" style="visibility:hidden">查价</div>
           </div>
         </div>`;
@@ -670,14 +701,14 @@
       p.rows.forEach(([n, made, req, mats], i) => {
         const md = made > 1 ? ` <span class="dim">×${made}</span>` : "";
         html += `<div class="blk${i % 2 ? " odd" : ""}">
-          <div class="pline">
+          <div class="pline" data-name="${n}" data-made="${made}">
             <div class="ico ${cls}"></div>
             <div class="prod">
               <div class="pname">${n}${md}<span class="pnpc">NPC ${money(npcSellOf(n))}</span></div>
               <div class="psell" data-made="${made}"></div>
             </div>
             <div class="req">[${req}]</div>
-            <div class="price"></div>
+            <div class="prices"><div class="price"></div><div class="npcprice"></div></div>
             <div class="qbtn" data-i="${i}">查价</div>
           </div>
           ${matLines(mats)}
@@ -693,7 +724,7 @@
        材料竖排后商品行只剩「图标 + 商品名 + 技能 + 盈亏 + 查价」,
        剩余宽度全给商品名 */
     const rowW = $list.clientWidth || 392;
-    const priceW = Math.max(56, Math.min(110, rowW * 0.16));
+    const priceW = Math.max(74, Math.min(98, rowW * 0.21));
     const rightFixed = 40 + 2 + 6 + priceW + 6 + 22;
     const titleW = Math.max(90, rowW - 22 - 8 - rightFixed);
     $list.style.setProperty("--tw", titleW.toFixed(1) + "px");
@@ -756,30 +787,39 @@
           const seed = Number(btn.dataset.i) + 5 + btn._n * 3;
 
           // 产物售价 → 商品名下方 (made > 1 时写整份的售价, 与盈亏口径一致)
+          const pline = row.querySelector(".pline");
+          const made = Number((pline && pline.dataset.made) || 1) || 1;
           const sell = (seed * 1370) % 9000 + 800;
           const ps = row.querySelector(".psell");
           if (ps) {
-            const made = Number(ps.dataset.made || 1) || 1;
             ps.className = "psell";
             ps.innerHTML = made > 1
               ? "售价 " + matPriceHTML(sell, made, ps.clientWidth - 20)
-              : "售价 " + money(sell) + "/个";
+              : "售价 " + moneyEx(sell) + "/个";
           }
 
-          // 材料金额 → 每样材料那一行的右侧 (数量 > 1 时写出整份的钱)
+          // 材料金额 → 每样材料那一行的右侧 (数量 > 1 时写出整份的钱), 顺手累加成本
+          let cost = 0;
           row.querySelectorAll(".mline").forEach((mc, k) => {
             const mp = mc.querySelector(".mprice");
             if (!mp) return;
             const cnt = Number(mc.dataset.cnt || 1) || 1;
             const unit = (seed * 733 + k * 977) % 4000 + 150;
+            cost += unit * cnt;
             mc.dataset.p = unit;                 // 该行独立提示要用
             mp.className = "mprice";
             mp.innerHTML = matPriceHTML(unit, cnt, 84);
           });
 
-          const v = mockProfit(seed);
-          cell.className = "price " + (v > 0 ? "good" : v < 0 ? "bad" : "");
-          cell.textContent = v > 0 ? `盈 ${money(v)}` : v < 0 ? `亏 ${money(-v)}` : "持平";
+          // 两档盈亏: 成本相同, 只差成品卖给谁 (对应 ApplyPriceToRow)
+          const ahProfit = Math.floor(sell * made * 0.95) - cost;
+          const npcUnit = npcSellOf(pline ? pline.dataset.name : "");
+          const npcProfit = npcUnit ? npcUnit * made - cost : null;
+          const prices = row.querySelector(".prices");
+          prices.innerHTML = plHTML("AH", ahProfit) +
+            (npcProfit === null
+              ? `<div class="npcprice">NPC 不收</div>`
+              : plHTML("NPC", npcProfit));
         }, 260);
       };
     });
@@ -827,6 +867,17 @@
     const t = el.classList.contains("mline") ? matTip(el) : el._tip;
     if (!t) return false;
     const html = [`<div class="t">${t.title}</div>`];
+
+    /* 默认和游戏里一致: 只给「物品原来的介绍」, 我们自己那些行 (技能 / 材料 / 单价 /
+       盈亏 / 商人价) 全部不显示 —— 游戏内在客户端原生提示后面才追加它们,
+       而且要用 /wgm tip extra 手动打开。这里用一行说明代替原生那几行。 */
+    if (!tipExtra) {
+      html.push(`<div class="hint">客户端原生物品提示：名字 / 物品等级 / 用途 / 描述 / 售价</div>`);
+      $tip.innerHTML = html.join("");
+      $tip.classList.add("on");
+      return true;
+    }
+
     if (t.sub) html.push(`<div class="sub">${t.sub}</div>`);
     if (t.mats && t.mats.length) {
       html.push(...t.mats.map(([n, c]) =>
@@ -909,6 +960,27 @@
   /* 截图/演示用: ?edit=1 直接弹出 NPC 买价录入框 */
   if (new URLSearchParams(location.search).get("edit") === "1") {
     $npcEditor.classList.add("on");
+  }
+
+  /* 截图/演示用: ?tip=1 直接把第一块的行提示摆出来 (?extra=1 一起用可看完整版) */
+  if (new URLSearchParams(location.search).get("tip") === "1") {
+    setTimeout(() => {
+      const blk = document.querySelector(".blk");
+      if (!blk) return;
+      const t = blk._tip;
+      if (!t) return;
+      $tip.innerHTML = "";
+      showTip(blk);
+      const r = blk.getBoundingClientRect();
+      const w = $tip.offsetWidth, h = $tip.offsetHeight;
+      let x = r.right + 16;
+      if (x + w > window.innerWidth - 8) x = r.left - w - 16;
+      let y = r.top + 24;
+      if (y + h > window.innerHeight - 8) y = window.innerHeight - h - 8;
+      $tip.style.left = x + "px";
+      $tip.style.top  = y + "px";
+      $tip.classList.add("on");
+    }, 120);
   }
 
   const t0 = Date.now();

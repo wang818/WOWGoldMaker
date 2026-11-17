@@ -44,6 +44,7 @@ local MAT_RIGHT   = 48   -- 材料行右边界: 让金额右缘与商品行的�
 -- NPC 价格列 (材料行, 夹在材料名与金额之间)
 --   卖价 = 客户端自带的「卖给商人」单价, 只读
 --   买价 = 玩家自己录入的「从商人买」单价, 可点开编辑
+local MAT_CNT_W   = 24   -- 「×3」这一列: 这个配方需要几个
 local MAT_SELL_W  = 54   -- 「卖 1银2铜」列宽
 local MAT_BUY_W   = 46   -- 「买 1银2铜」列宽
 local MAT_TAG_GAP = 6    -- 卖价 / 买价 之间的间距 (两个 NPC 价算一组)
@@ -119,11 +120,36 @@ end
 -- 避免把刚接管提示的材料行一起关掉 (表现是「提示一闪一闪」)。
 
 local tipOwner
+local tipRebuild        -- 当前这条提示的「重建函数」, 物品数据晚到用它整条重画
 
 local function TipBegin(owner)
+    -- 每次「全新的一次悬停」都要重新给够重试次数。判据是归属变了 (tipOwner 在提示关闭
+    -- 后会被置 nil), 而不是「和上次是不是同一个控件」——同一行连着悬停两次就是同一个
+    -- 控件, 按后者判断的话第一次把重试次数用完, 后面每次悬停都不会再补, 表现就是
+    -- 「第一次能看到物品描述, 再悬停又只剩名字」。
+    if tipOwner ~= owner and type(owner) == "table" then
+        owner._tipTries = 0
+    end
     tipOwner = owner
     TooltipAtCursor(owner)
     pcall(GameTooltip.ClearLines, GameTooltip)
+end
+
+-- 物品数据是异步回包的: 第一次悬停往往只有一个名字, 描述/用途那几行要等下一次。
+-- 这里在数据没到的时候排一次重建, 用户不用把鼠标挪开再挪回来。
+-- 用 owner._tipTries 限次 (最多补两次), 免得客户端一直不给数据时反复重排。
+local function TipRetry(rebuild)
+    local owner = tipOwner
+    if not owner or type(rebuild) ~= "function" then return end
+    if not (owner._tipTries and owner._tipTries < 2) then return end
+    owner._tipTries = owner._tipTries + 1
+    -- 第一次快一点 (多数情况数据就在本地了), 第二次等一轮服务器往返
+    local delay = (owner._tipTries == 1) and 0.4 or 1.2
+    C_Timer.After(delay, function()
+        if tipOwner ~= owner then return end
+        if GameTooltip.IsShown and not GameTooltip:IsShown() then return end
+        pcall(rebuild)
+    end)
 end
 
 local function TipEnd(owner)
@@ -131,39 +157,157 @@ local function TipEnd(owner)
     C_Timer.After(0, function()
         if tipOwner == owner then
             tipOwner = nil
+            -- 提示真的关掉了才算这次悬停结束: 把重试次数还回去, 下次悬停重新等数据
+            if type(owner) == "table" then owner._tipTries = 0 end
             GameTooltip:Hide()
         end
     end)
 end
 
--- 物品信息是否已缓存: 没缓存时 SetItemByID 会显示「正在检索物品信息…」的空壳,
--- 不如直接用手写标题, 等下一轮悬停再走原生提示
-local function ItemReady(itemID)
-    if not itemID then return false end
-    local ok, name = pcall(GetItemInfo, itemID)
-    return ok and type(name) == "string" and name ~= ""
+-- 物品基础信息 (名称 + 链接)。取值链收在 Npc.lua 里: 新版客户端的
+-- C_Item.GetItemInfo 返回的是 ItemInfo 表, 旧的是多返回值, 两种都要认。
+local function ItemInfo(itemID)
+    if not itemID then return nil end
+    if ns.NPC and ns.NPC.Info then
+        local name, link = ns.NPC.Info(itemID)
+        if name or link then return name, link end
+        return nil
+    end
+    -- Npc.lua 没加载时的兜底 (取值链与它保持一致: 表形态 / 多返回值形态都认)
+    if C_Item and type(C_Item.GetItemInfo) == "function" then
+        local ok, a, b = pcall(C_Item.GetItemInfo, itemID)
+        if ok then
+            if type(a) == "table" then
+                local n, l = a.itemName, a.itemLink
+                local hasN = (type(n) == "string" and n ~= "")
+                local hasL = (type(l) == "string" and l ~= "")
+                if hasN or hasL then return hasN and n or nil, hasL and l or nil end
+            elseif type(a) == "string" and a ~= "" then
+                return a, b
+            end
+        end
+    end
+    if type(GetItemInfo) == "function" then
+        local ok, name, link = pcall(GetItemInfo, itemID)
+        if ok and type(name) == "string" and name ~= "" then return name, link end
+    end
+    return nil
 end
 
--- 先用原生物品提示打底 (品质色标题 / 物品等级 / 描述 / 使用效果),
--- 拿不到缓存就退化成一行手写名字, 保证提示非空
+-- 先用原生物品提示打底 (品质色标题 / 物品等级 / 使用效果 / 描述 / 售价),
+-- 拿不到缓存就退化成一行手写名字, 保证提示非空。
+-- 返回 true = 走的是原生提示, 调用方可以放心往后面追加自己的行。
 local function NativeItemTip(itemID, fallbackName)
-    if ItemReady(itemID) then
-        local ok = false
-        if GameTooltip.SetItemByID then
-            ok = pcall(GameTooltip.SetItemByID, GameTooltip, itemID)
-        elseif GameTooltip.SetHyperlink then
-            ok = pcall(GameTooltip.SetHyperlink, GameTooltip, "item:" .. tostring(itemID))
-        end
+    local name, link = ItemInfo(itemID)
+    if itemID and (name or link) then
         local lines = 0
-        if ok and GameTooltip.NumLines then
-            local okN, n = pcall(GameTooltip.NumLines, GameTooltip)
-            lines = (okN and type(n) == "number") and n or 0
+
+        -- 首选 SetItemByID: 现代接口, 直接按 ID 组提示
+        if GameTooltip.SetItemByID then
+            if pcall(GameTooltip.SetItemByID, GameTooltip, itemID) and GameTooltip.NumLines then
+                local okN, n = pcall(GameTooltip.NumLines, GameTooltip)
+                lines = (okN and type(n) == "number") and n or 0
+            end
         end
-        if ok and lines > 0 then return true end
+
+        -- SetItemByID 不可用 / 只塞出一行名字时, 换成带完整链接的 SetHyperlink 再试一次。
+        -- 链接里带着物品 ID 与品质, 客户端才会把描述、用途、售价那些行一起填进来。
+        if lines < 2 and GameTooltip.SetHyperlink then
+            local hl = (type(link) == "string" and link ~= "")
+                and link
+                or ("item:" .. tostring(itemID) .. ":0:0:0:0:0:0:0")
+            if pcall(GameTooltip.SetHyperlink, GameTooltip, hl) and GameTooltip.NumLines then
+                local okN, n = pcall(GameTooltip.NumLines, GameTooltip)
+                local got = (okN and type(n) == "number") and n or 0
+                if got > lines then lines = got end
+            end
+        end
+
+        if lines > 0 then
+            -- 只有一行 = 客户端目前只认得名字, 描述/用途还没到, 排一次重建等它
+            if lines < 2 then TipRetry(tipRebuild) end
+            -- SetItemByID / SetHyperlink 有可能顺手改掉 owner, 重新贴回光标
+            TooltipAtCursor(tipOwner)
+            return true
+        end
         pcall(GameTooltip.ClearLines, GameTooltip)
     end
-    GameTooltip:AddLine(fallbackName or (itemID and ("物品 #" .. tostring(itemID))) or "?", 1, 1, 1)
+    -- 走到这里说明物品数据不完整 (只有名字, 或者干脆还没有) —— 客户端的物品数据
+    -- 是异步回包的, 排一次重建等它, 用户不用把鼠标移开再放回来。
+    TipRetry(tipRebuild)
+    GameTooltip:AddLine(fallbackName or (itemID and ("物品 #" .. tostring(itemID))) or "?", 1, 1, 1, true)
+    if itemID then
+        GameTooltip:AddLine("物品资料还在向客户端索取, 停一下再看", 0.55, 0.58, 0.63)
+    end
     return false
+end
+
+-- 悬停要不要附带我们自己的行 (配方 / 单价 / 盈亏 / NPC 价)。
+-- 默认关: 悬停就只给「物品原来的介绍」, 和在背包、拍卖行里看到的一模一样, 不多一行。
+-- 想看额外信息用 /wgm tip extra 打开 (存进存档, 重登还在)。
+local function TipExtra()
+    local db = ns.DB and ns.DB()
+    return (type(db) == "table" and not not db.tipExtra)
+end
+
+-- 只出「物品原来的介绍」时的入口。
+-- 写法照客户端自带的「无限副本手册」(DungeonsForever/Core/ZoneOrb.lua 的 ItemTip):
+--   SetOwner → SetItemByID → Show, 中间不 ClearLines, 填完内容之后也不再改 owner。
+-- 我们原先那套「填完内容再 TooltipAtCursor 一次」在部分客户端上会把刚填好的行清掉,
+-- 表现就是「悬停什么都不出来」。
+local function TipStart(anchor)
+    if tipOwner ~= anchor and type(anchor) == "table" then
+        anchor._tipTries = 0            -- 新的一次悬停, 重试次数还回去
+    end
+    tipOwner = anchor
+    if GameTooltip.SetOwner and type(anchor) == "table" then
+        if not pcall(GameTooltip.SetOwner, GameTooltip, anchor, "ANCHOR_CURSOR_RIGHT") then
+            pcall(GameTooltip.SetOwner, GameTooltip, anchor, "ANCHOR_RIGHT")
+        end
+    end
+end
+
+-- 返回 true = 客户端给足了内容 (>= 2 行), 调用方可以放心追加自己的行
+local function ShowNativeTip(anchor, itemID, fallbackName)
+    TipStart(anchor)
+
+    local got = 0
+    local name, link = ItemInfo(itemID)
+    if itemID and (name or link) then
+        if GameTooltip.SetItemByID then
+            if pcall(GameTooltip.SetItemByID, GameTooltip, itemID) and GameTooltip.NumLines then
+                local okN, n = pcall(GameTooltip.NumLines, GameTooltip)
+                got = (okN and type(n) == "number") and n or 0
+            end
+        end
+        -- 只吐出一行名字时换成带完整链接的 SetHyperlink 再试一次
+        if got < 2 and GameTooltip.SetHyperlink then
+            local hl = (type(link) == "string" and link ~= "")
+                and link
+                or ("item:" .. tostring(itemID) .. ":0:0:0:0:0:0:0")
+            if pcall(GameTooltip.SetHyperlink, GameTooltip, hl) and GameTooltip.NumLines then
+                local okN, n = pcall(GameTooltip.NumLines, GameTooltip)
+                local m = (okN and type(n) == "number") and n or 0
+                if m > got then got = m end
+            end
+        end
+    end
+
+    if got <= 0 then
+        -- 客户端这一下没给出内容: 至少显示名字, 别让悬停变成空白
+        pcall(GameTooltip.ClearLines, GameTooltip)
+        local txt = (type(fallbackName) == "string" and fallbackName ~= "" and fallbackName)
+            or (itemID and ("物品 #" .. tostring(itemID))) or "?"
+        GameTooltip:AddLine(txt, 1, 1, 1, true)
+        if itemID then
+            GameTooltip:AddLine("物品资料还在向客户端索取, 停一下再看", 0.55, 0.58, 0.63)
+        end
+    end
+
+    GameTooltip:Show()
+    -- 客户端物品数据是异步回包的: 内容不全就排一次整条重画 (最多两次)
+    if got < 2 then TipRetry(tipRebuild) end
+    return got >= 2
 end
 
 local iconsPending = true
@@ -585,7 +729,8 @@ local REQ_W      = 22    -- 技能等级 [300] 的宽度
 local ApplyPriceToRow, CheckRowPrice, AnchorRowRight
 
 local function RowColumns(w)
-    local priceW = math.max(56, math.min(110, w * 0.16))
+    -- 盈亏要写「AH 盈 1金23银45铜」这种带铜位的完整金额, 比原来的「盈 12银」长一截
+    local priceW = math.max(74, math.min(98, w * 0.21))
     local rightFixed = BTN_W + 2 + 6 + priceW + 6 + REQ_W     -- 按钮 + 间距 + 价格 + 间距 + 技能
     local titleW = w - ROW_ICON_W - ROW_GAP - rightFixed
     if titleW < 90 then titleW = 90 end
@@ -707,8 +852,12 @@ local function RelayoutMats(r, w)
     local n = r.cellCount or 0
     local cw = w - MAT_INDENT - MAT_RIGHT      -- 右缘与「盈亏」列对齐, 不越到查价按钮下面
     if cw < 90 then cw = 90 end
-    local nameW = cw - (MAT_PRICE_W + MAT_SELL_W + MAT_BUY_W + MAT_TAG_GAP + MAT_PRICE_GAP * 2)
-    if nameW < 56 then nameW = 56 end
+    -- 名字从「图标右缘 +4」起笔, 这 13px 也要从可用宽度里扣, 否则右侧那几列
+    -- 会正好压住名字末尾 (差的就是这一段)
+    local used = MAT_ICON + 4 + MAT_PRICE_W + MAT_SELL_W + MAT_BUY_W + MAT_CNT_W
+               + MAT_TAG_GAP * 2 + MAT_PRICE_GAP * 2
+    local nameW = cw - used
+    if nameW < 40 then nameW = 40 end   -- 下限再低一点: 名字宁可裁, 也不能压到数量列上
 
     for k = 1, MAT_CELLS do
         local c = r.cells[k]
@@ -719,13 +868,17 @@ local function RelayoutMats(r, w)
             c.name:SetWidth(nameW)
             c.price:SetWidth(MAT_PRICE_W)
 
-            -- 右侧从右往左排: 本配方金额 → NPC 买价 → NPC 卖价, 左边的余量全给材料名
+            -- 右侧从右往左排: 本配方金额 → NPC 买价 → NPC 卖价 → 需要几个,
+            -- 左边的余量全给材料名
             c.buyTag:SetWidth(MAT_BUY_W)
             c.buyTag:ClearAllPoints()
             c.buyTag:SetPoint("RIGHT", c.price, "LEFT", -MAT_PRICE_GAP, 0)
             c.sellTag:SetWidth(MAT_SELL_W)
             c.sellTag:ClearAllPoints()
             c.sellTag:SetPoint("RIGHT", c.buyTag, "LEFT", -MAT_TAG_GAP, 0)
+            c.cnt:SetWidth(MAT_CNT_W)
+            c.cnt:ClearAllPoints()
+            c.cnt:SetPoint("RIGHT", c.sellTag, "LEFT", -MAT_TAG_GAP, 0)
             c.buyHit:SetSize(MAT_BUY_W, MAT_LINE_H)
             c.buyHit:ClearAllPoints()
             c.buyHit:SetPoint("RIGHT", c.price, "LEFT", -MAT_PRICE_GAP, 0)
@@ -747,6 +900,7 @@ local function RelayoutRows(w)
         r.title:SetWidth(titleW)
         r.prodPrice:SetWidth(titleW)
         r.price:SetWidth(priceW)
+        r.npcPrice:SetWidth(priceW)
         RelayoutMats(r, w)
         PlaceNpcTag(r)
         -- 金额要写成「单价×数量 = 合计」还是只写合计, 取决于可用宽度, 用已有结果重画一次
@@ -908,14 +1062,17 @@ AnchorRowRight = function(r, withBtn)
     r.btn:ClearAllPoints()
     r.btn:SetPoint("TOPRIGHT", r, "TOPRIGHT", -2, -PRODUCT_H * 0.5)
 
+    -- 盈亏两行 (拍卖行 / NPC) 右缘对齐在按钮左侧, 上下各占一行
+    local right = withBtn and -(BTN_W + 2 + 6) or -4
+    local pw = r.price:GetWidth() or 72
     r.price:ClearAllPoints()
-    if withBtn then
-        r.price:SetPoint("RIGHT", r.btn, "LEFT", -6, 0)
-    else
-        r.price:SetPoint("TOPRIGHT", r, "TOPRIGHT", -4, -PRODUCT_H * 0.5)
-    end
+    r.price:SetPoint("TOPRIGHT", r, "TOPRIGHT", right, -3)
+    r.npcPrice:ClearAllPoints()
+    r.npcPrice:SetPoint("TOPRIGHT", r, "TOPRIGHT", right, -14)
+
+    -- 技能等级: 落在两行盈亏左边、商品行垂直中线 ("RIGHT" 指向 TOPRIGHT 的点 = 右缘居中)
     r.req:ClearAllPoints()
-    r.req:SetPoint("RIGHT", r.price, "LEFT", -6, 0)
+    r.req:SetPoint("RIGHT", r, "TOPRIGHT", right - pw - 6, -PRODUCT_H * 0.5)
 end
 
 local function GetRow(i)
@@ -1006,6 +1163,13 @@ local function GetRow(i)
         c.name = T.Text(c, F_MAT, C.muted)
         c.name:SetPoint("LEFT", c.icon, "RIGHT", 4, 0)
         c.name:SetWordWrap(false)
+
+        -- 需要几个 (×3)。单独一列而不是拼在名字后面: 名字那列宽度是按可用空间算的,
+        -- 拼在末尾的话长名字会先把数字裁掉 —— 数量比名字重要, 不能丢。
+        c.cnt = T.Text(c, F_MAT, C.faint)
+        c.cnt:SetWordWrap(false)
+        c.cnt:SetJustifyH("RIGHT")
+
         c.price = T.Text(c, F_MAT, C.faint)
         c.price:SetPoint("RIGHT", c, "RIGHT", 0, 0)
         c.price:SetWordWrap(false)
@@ -1068,11 +1232,17 @@ local function GetRow(i)
     r.req:SetPoint("RIGHT", -6, 0)
     r.req:SetJustifyH("RIGHT")
 
-    -- 价格列: 查价结果 (盈/亏) 或材料单价
+    -- 价格列: 查价结果。两行 —— 上面拍卖行盈亏, 下面 NPC 盈亏
+    -- (材料成本共用, 差别只在成品卖给谁, 所以并排放才看得出该走哪条路)
     r.price = T.Text(r, F_PRICE, C.muted)
     r.price:SetWidth(72)
     r.price:SetWordWrap(false)
     r.price:SetJustifyH("RIGHT")
+
+    r.npcPrice = T.Text(r, F_PRICE, C.muted)
+    r.npcPrice:SetWidth(72)
+    r.npcPrice:SetWordWrap(false)
+    r.npcPrice:SetJustifyH("RIGHT")
 
     -- 查价按钮 (每行一个, 点一下查该配方产物 + 全部材料的拍卖行价)
     r.btn = MakeMiniButton(r, BTN_W, 14, "查价")
@@ -1253,6 +1423,7 @@ RenderList = function()
             r.title:SetWidth(titleW)
             r.prodPrice:SetWidth(titleW)
             r.price:SetWidth(priceW)
+            r.npcPrice:SetWidth(priceW)
 
             r.odd = (i % 2 == 0)
             r.bg:SetColorTexture(1, 1, 1, r.odd and 0.025 or 0)
@@ -1268,7 +1439,9 @@ RenderList = function()
                 SetRowIcon(r, m.id)
                 SetRowNpc(r, m.id)
 
-                -- 材料汇总: 单价写在材料名下方, 右侧是该材料的合计花费
+                -- 材料汇总: 单价写在材料名下方, 右侧是该材料的合计花费。
+                -- 这行本身就是一样材料, 没有「成品卖给谁」的问题, 所以 NPC 盈亏那行留空。
+                r.npcPrice:SetText("")
                 local e = ns.Auction and ns.Auction.Price(m.id)
                 if e and e.unit then
                     r.prodPrice:SetTextColor(T.rgb(C.gold))
@@ -1305,6 +1478,7 @@ RenderList = function()
                     SetCellNpc(c, m.id)
                     c.hl:Hide()     -- 行被复用: 上一个配方留下的悬停高亮要清掉
                     c.name:SetText(m.name or ("#" .. tostring(m.id)))
+                    c.cnt:SetText(format("×%d", m.count or 1))
                     c.price:SetText("")
                 end
 
@@ -1341,6 +1515,7 @@ ApplyPriceToRow = function(r, out)
 
     local function clear()
         r.prodPrice:SetText("")
+        r.npcPrice:SetText("")
         for k = 1, (r.cellCount or 0) do
             r.cells[k].price:SetText("")
         end
@@ -1365,7 +1540,7 @@ ApplyPriceToRow = function(r, out)
             r.prodPrice:SetText("售价 " .. MatPriceText(AH, prod.unit, made,
                 (r.title:GetWidth() or 72) - 20, F_PROD))
         else
-            r.prodPrice:SetText("售价 " .. AH.Money(prod.unit) .. "/个")
+            r.prodPrice:SetText("售价 " .. AH.MoneyEx(prod.unit) .. "/个")
         end
     elseif prod then
         r.prodPrice:SetTextColor(T.rgb(C.red))
@@ -1391,20 +1566,46 @@ ApplyPriceToRow = function(r, out)
         end
     end
 
+    -- 两行盈亏: 上 = 拍卖行 (扣 5% 税), 下 = NPC (卖给商人, 不抽成)。
+    -- 金额精确到铜 (AH.MoneyEx): 1金 = 100银 = 100铜, 差 1 铜也要看得出来。
     if out.profit then
         if out.profit > 0 then
             r.price:SetTextColor(T.rgb(C.green))
-            r.price:SetText("盈 " .. AH.Money(out.profit))
+            r.price:SetText("AH 盈" .. AH.MoneyEx(out.profit))
         elseif out.profit < 0 then
             r.price:SetTextColor(T.rgb(C.red))
-            r.price:SetText("亏 " .. AH.Money(-out.profit))
+            r.price:SetText("AH 亏" .. AH.MoneyEx(-out.profit))
         else
             r.price:SetTextColor(T.rgb(C.muted))
-            r.price:SetText("持平")
+            r.price:SetText("AH 持平")
         end
     else
         r.price:SetTextColor(T.rgb(C.faint))
-        r.price:SetText(format("缺 %d 项价格", #(out.missing or {})))
+        r.price:SetText(format("缺 %d 项", #(out.missing or {})))
+    end
+
+    -- NPC 那一行: 三种状态要分清 —— 有价 / 商人不要这件东西 / 价格还没读到
+    if out.npcProfit then
+        if out.npcProfit > 0 then
+            r.npcPrice:SetTextColor(T.rgb(C.green))
+            r.npcPrice:SetText("NPC 盈" .. AH.MoneyEx(out.npcProfit))
+        elseif out.npcProfit < 0 then
+            r.npcPrice:SetTextColor(T.rgb(C.red))
+            r.npcPrice:SetText("NPC 亏" .. AH.MoneyEx(-out.npcProfit))
+        else
+            r.npcPrice:SetTextColor(T.rgb(C.muted))
+            r.npcPrice:SetText("NPC 持平")
+        end
+    elseif out.npcUnit then
+        -- 有收购价但材料缺价: 差的是成本, 别说成「商人不收」
+        r.npcPrice:SetTextColor(T.rgb(C.faint))
+        r.npcPrice:SetText("NPC 缺价")
+    elseif out.npcKnown then
+        r.npcPrice:SetTextColor(T.rgb(C.faint))
+        r.npcPrice:SetText("NPC 不收")
+    else
+        r.npcPrice:SetTextColor(T.rgb(C.faint))
+        r.npcPrice:SetText("NPC 待查")
     end
 end
 
@@ -1425,6 +1626,7 @@ CheckRowPrice = function(r)
         -- 提示会自动消失, 行上同时留个标记, 免得过一会儿忘了为什么没查
         r.price:SetTextColor(T.rgb(C.gold))
         r.price:SetText(noAH and "需开拍卖行" or "无查价接口")
+        r.npcPrice:SetText("")            -- 这一轮没查成, 别留上一轮的 NPC 盈亏
         return
     end
 
@@ -1432,6 +1634,7 @@ CheckRowPrice = function(r)
     r.btn.text:SetText("查询中")
     r.price:SetTextColor(T.rgb(C.gold))
     r.price:SetText(format("0/%d", 1 + #(rec.mats or {})))
+    r.npcPrice:SetText("")                -- 查询期间只留进度, 两行都别显示旧数字
 
     AH.CheckRecipe(rec, function(out)
         if r.rec ~= rec then return end       -- 行已被别的配方复用, 状态交给 RenderList
@@ -1491,25 +1694,34 @@ function ns.UI.ShowPriceTooltip(anchor, r)
         end
 
         GameTooltip:AddLine(" ")
-        GameTooltip:AddDoubleLine("成本", AH.Money(out.cost or 0),
+        GameTooltip:AddDoubleLine("成本", AH.MoneyEx(out.cost or 0),
             0.72, 0.75, 0.80, 0.92, 0.93, 0.95)
-        GameTooltip:AddDoubleLine("收入 (扣 5% 税)", AH.Money(out.net or 0),
+        GameTooltip:AddDoubleLine("收入 (扣 5% 税)", AH.MoneyEx(out.net or 0),
             0.72, 0.75, 0.80, 0.92, 0.93, 0.95)
 
         -- NPC 保底: 这一单全卖给商人的收入。AH 扣完税还不如它时, 这才是真实下限
         local npcProd = ns.NPC and ns.NPC.Sell(rec.item)
         if npcProd then
-            GameTooltip:AddDoubleLine("卖商人 (保底)", AH.Money(npcProd * made),
+            GameTooltip:AddDoubleLine("卖商人 (保底)", AH.MoneyEx(npcProd * made),
                 0.72, 0.75, 0.80, 0.82, 0.84, 0.88)
         end
 
+        -- 两档盈亏并列: 成本相同, 只差成品卖给谁
+        local function plText(v)
+            if v == 0 then return "持平" end
+            return (v > 0 and "+" or "-") .. AH.MoneyEx(math.abs(v))
+        end
+        local function plColor(v)
+            if v > 0 then return 0.40, 0.80, 0.45 end
+            if v < 0 then return 0.92, 0.42, 0.42 end
+            return 0.72, 0.75, 0.80
+        end
+
         if out.profit then
-            local txt = (out.profit >= 0 and "+" or "-") .. AH.Money(math.abs(out.profit))
-            local rr, gg, bb = 0.40, 0.80, 0.45
-            if out.profit < 0 then rr, gg, bb = 0.92, 0.42, 0.42 end
-            GameTooltip:AddDoubleLine("利润", txt, 1, 1, 1, rr, gg, bb)
+            GameTooltip:AddDoubleLine("拍卖行盈亏", plText(out.profit),
+                1, 1, 1, plColor(out.profit))
         else
-            GameTooltip:AddDoubleLine("利润", "价格不全",
+            GameTooltip:AddDoubleLine("拍卖行盈亏", "价格不全",
                 1, 1, 1, 0.92, 0.55, 0.40)
             local parts = {}
             for i = 1, #(out.why or {}) do
@@ -1522,6 +1734,26 @@ function ns.UI.ShowPriceTooltip(anchor, r)
             GameTooltip:AddLine("「无挂单」= 拍卖行里没人卖, 不是接口故障",
                 0.55, 0.58, 0.63, true)
         end
+
+        -- NPC 盈亏: 材料仍按拍卖行价买, 成品直接卖给商人 (不抽税)。
+        -- 三种状态分开写, 别把「还没读到」和「商人不收」混成一句
+        if out.npcProfit then
+            GameTooltip:AddDoubleLine("NPC 盈亏", plText(out.npcProfit),
+                1, 1, 1, plColor(out.npcProfit))
+        elseif out.npcUnit then
+            GameTooltip:AddDoubleLine("NPC 盈亏", "材料缺价",
+                1, 1, 1, 0.62, 0.65, 0.70)
+        elseif out.npcKnown then
+            GameTooltip:AddDoubleLine("NPC 盈亏", "商人收不了这个",
+                1, 1, 1, 0.62, 0.65, 0.70)
+        else
+            GameTooltip:AddDoubleLine("NPC 盈亏", "收购价还没读到",
+                1, 1, 1, 0.62, 0.65, 0.70)
+        end
+        GameTooltip:AddLine("两档盈亏的材料成本相同 (都按拍卖行价), 只差成品卖给谁",
+            0.55, 0.58, 0.63, true)
+        GameTooltip:AddLine("金额精确到 1 铜: 1金 = 100银 = 100铜",
+            0.55, 0.58, 0.63, true)
 
         local age = AH.Age(rec.item)
         if age then
@@ -1549,6 +1781,17 @@ function ns.UI.ShowRowTooltip(anchor, r)
 
     local AH = ns.Auction
     local rec = r.rec
+    local itemID = (rec and rec.item) or r.itemID
+    local fallback = PlainText(r.title and r.title:GetText())
+    tipRebuild = function() return ns.UI.ShowRowTooltip(anchor, r) end
+
+    -- 默认: 只出物品原来的介绍 (品质色名字 / 物品等级 / 用途 / 描述 / 售价),
+    -- 和在背包、拍卖行里悬停看到的完全一致, 不追加配方、单价、盈亏那些行。
+    if not TipExtra() then
+        ShowNativeTip(anchor, itemID, fallback)
+        return
+    end
+
     TipBegin(anchor)
 
     -- 材料汇总模式: 这一行本身就是一样材料, 交给材料详情
@@ -1583,7 +1826,12 @@ function ns.UI.ShowRowTooltip(anchor, r)
     local profName = (ns.Prof and ns.Prof.byKey and ns.Prof.byKey[curKey]
         and ns.Prof.byKey[curKey].name) or curKey
 
-    GameTooltip:AddLine(title, 1, 1, 1, true)
+    -- 原生物品提示打底: 品质色标题 + 物品等级 + 使用效果 + 描述 + 售价。
+    -- 手写标题只剩一行白字, 看不到「这物品到底是干什么的」, 所以改由客户端来出这一段,
+    -- 我们的配方信息接在它后面。物品数据还没回包时 NativeItemTip 会自己补一行名字。
+    local native = NativeItemTip(rec.item, title)
+    if native then GameTooltip:AddLine(" ") end
+
     GameTooltip:AddLine(format("%s · 技能 %s%s", tostring(profName),
         tostring(rec.req or "?"),
         made > 1 and format(" · 一次做 %d 个", made) or ""),
@@ -1640,23 +1888,35 @@ function ns.UI.ShowRowTooltip(anchor, r)
         end
     end
 
-    -- 已查价: 成本 / 税后收入 / 盈亏
+    -- 已查价: 成本 / 税后收入 / 两档盈亏 (拍卖行 + NPC)
     if fresh and out then
         GameTooltip:AddLine(" ")
-        GameTooltip:AddDoubleLine("材料成本", AH.Money(out.cost or 0), 0.72, 0.75, 0.80, 0.92, 0.75, 0.55)
+        GameTooltip:AddDoubleLine("材料成本", AH.MoneyEx(out.cost or 0), 0.72, 0.75, 0.80, 0.92, 0.75, 0.55)
         if out.revenue then
-            GameTooltip:AddDoubleLine("税后收入", AH.Money(out.net or 0),
+            GameTooltip:AddDoubleLine("税后收入", AH.MoneyEx(out.net or 0),
                 0.72, 0.75, 0.80, 0.92, 0.80, 0.50)
         end
         if out.profit then
             local gain = out.profit >= 0
-            GameTooltip:AddDoubleLine("盈亏",
-                format("%s%s", gain and "+" or "-", AH.Money(math.abs(out.profit))),
+            GameTooltip:AddDoubleLine("拍卖行盈亏",
+                format("%s%s", gain and "+" or "-", AH.MoneyEx(math.abs(out.profit))),
                 0.72, 0.75, 0.80,
                 gain and 0.40 or 0.92, gain and 0.86 or 0.38, gain and 0.46 or 0.42)
         else
             GameTooltip:AddLine("缺价格: " .. table.concat(out.missing or {}, ", "),
                 0.86, 0.42, 0.42)
+        end
+        -- NPC 一侧: 材料成本同上, 成品按商人收购价算
+        if out.npcProfit then
+            local gain = out.npcProfit >= 0
+            GameTooltip:AddDoubleLine("NPC 盈亏",
+                format("%s%s", gain and "+" or "-", AH.MoneyEx(math.abs(out.npcProfit))),
+                0.72, 0.75, 0.80,
+                gain and 0.40 or 0.92, gain and 0.86 or 0.38, gain and 0.46 or 0.42)
+        elseif out.npcKnown then
+            GameTooltip:AddDoubleLine("NPC 盈亏", "商人收不了这个", 0.72, 0.75, 0.80, 0.60, 0.63, 0.68)
+        else
+            GameTooltip:AddDoubleLine("NPC 盈亏", "收购价还没读到", 0.72, 0.75, 0.80, 0.60, 0.63, 0.68)
         end
         -- 缓存只存在物品维度上 (db.prices), 计算结果的 unit 表里没有时间戳
         local cached = AH and AH.Price and AH.Price(rec.item)
@@ -1691,8 +1951,17 @@ function ns.UI.ShowMatTooltip(anchor, r, idx)
 
     local AH = ns.Auction
     local cnt = m.count or 1
+    local fallback = (m.name and PlainText(m.name)) or ("物品 #" .. tostring(m.id))
+    tipRebuild = function() return ns.UI.ShowMatTooltip(anchor, r, idx) end
+
+    -- 默认只出物品原来的介绍 (材料也一样, 和在背包里悬停没有区别)
+    if not TipExtra() then
+        ShowNativeTip(anchor, m.id, fallback)
+        return
+    end
+
     TipBegin(anchor)
-    NativeItemTip(m.id, (m.name and PlainText(m.name)) or ("物品 #" .. tostring(m.id)))
+    NativeItemTip(m.id, fallback)
 
     GameTooltip:AddLine(" ")
     GameTooltip:AddLine(format("本配方需要 ×%d", cnt), 0.85, 0.86, 0.90)
@@ -1730,6 +1999,14 @@ end
 
 -- 图标详情 (鼠标停在行首图标上): 原生物品提示 + 该物品的当前售价
 function ns.UI.ShowItemTip(anchor, itemID, label)
+    tipRebuild = function() return ns.UI.ShowItemTip(anchor, itemID, label) end
+
+    -- 默认只出物品原来的介绍, 不多加一行
+    if not TipExtra() then
+        ShowNativeTip(anchor, itemID, label)
+        return
+    end
+
     TipBegin(anchor)
     NativeItemTip(itemID, label)
 
@@ -1753,6 +2030,66 @@ function ns.UI.ShowItemTip(anchor, itemID, label)
         end
     end
     GameTooltip:Show()
+end
+
+-- 诊断: 为什么某件物品的提示只有名字, 没有「用途 / 描述」
+-- /wgm tip <物品ID>; 不给 ID 时用当前列表第一行的产物
+function ns.UI.DebugItemTip(itemID)
+    if not itemID and rows[1] then itemID = rows[1].itemID end
+    if not itemID then
+        ns.Print("用法: /wgm tip <物品ID> (列表还没内容时只能这样给)")
+        return
+    end
+
+    ns.Print(format("物品提示诊断 #%d", itemID))
+    print("  全局 GetItemInfo:  " .. (type(GetItemInfo) == "function" and "有" or "|cffff5555无|r"))
+    print("  C_Item.GetItemInfo: " .. ((C_Item and type(C_Item.GetItemInfo) == "function")
+        and "有" or "|cffff5555无|r"))
+    print("  SetItemByID: " .. (GameTooltip.SetItemByID and "有" or "|cffff5555无|r")
+        .. "   SetHyperlink: " .. (GameTooltip.SetHyperlink and "有" or "|cffff5555无|r")
+        .. "   NumLines: " .. (GameTooltip.NumLines and "有" or "|cffff5555无|r"))
+
+    local name, link = ItemInfo(itemID)
+    print("  读取: name=" .. tostring(name))
+    print("        link=" .. tostring(link))
+
+    local function dump(tag)
+        local n = 0
+        if GameTooltip.NumLines then
+            local ok, v = pcall(GameTooltip.NumLines, GameTooltip)
+            n = (ok and type(v) == "number") and v or 0
+        end
+        print(format("  %s → %d 行", tag, n))
+        for i = 1, n do
+            local ok, txt = pcall(GameTooltip.GetLineText, GameTooltip, i)
+            print(format("    %d| %s", i, tostring(ok and txt or "?")))
+        end
+    end
+
+    if GameTooltip.SetItemByID then
+        pcall(GameTooltip.ClearLines, GameTooltip)
+        pcall(GameTooltip.SetItemByID, GameTooltip, itemID)
+        dump("SetItemByID")
+    end
+    if GameTooltip.SetHyperlink then
+        pcall(GameTooltip.ClearLines, GameTooltip)
+        local hl = (type(link) == "string" and link ~= "")
+            and link or ("item:" .. tostring(itemID) .. ":0:0:0:0:0:0:0")
+        pcall(GameTooltip.SetHyperlink, GameTooltip, hl)
+        dump("SetHyperlink")
+    end
+
+    pcall(GameTooltip.Hide, GameTooltip)
+
+    -- 锚点写法: 有的客户端不认 ANCHOR_CURSOR_RIGHT, SetOwner 直接报错 -> 提示根本不显示
+    for _, tok in ipairs({ "ANCHOR_CURSOR_RIGHT", "ANCHOR_CURSOR", "ANCHOR_RIGHT" }) do
+        local ok, err = pcall(GameTooltip.SetOwner, GameTooltip, UIParent, tok)
+        print(format("  SetOwner(%s) → %s", tok,
+            ok and "ok" or ("|cffff5555失败: " .. tostring(err) .. "|r")))
+    end
+    pcall(GameTooltip.Hide, GameTooltip)
+
+    print("  |cff8a929e物品数据是异步回包的: 第一次可能只有名字, 数据到了悬停会自己补全|r")
 end
 
 --------------------------------------------------------------------------- NPC 买价录入
