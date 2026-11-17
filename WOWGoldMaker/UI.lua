@@ -862,11 +862,16 @@ local function RelayoutMats(r, w)
     for k = 1, MAT_CELLS do
         local c = r.cells[k]
         if k <= n then
-            c:SetSize(cw, MAT_LINE_H)
+            -- 材料行整行都是这一样材料的命中区 (悬停看它、左键在拍卖行搜它),
+            -- 所以控件铺满整行宽度; 右侧几列仍按 cw 的右缘摆 (MAT_RIGHT 那段留白
+            -- 是给商品行的按钮列对齐用的), 否则金额会跟着控件一起右移。
+            c:SetSize(w - MAT_INDENT, MAT_LINE_H)
             c:ClearAllPoints()
             c:SetPoint("TOPLEFT", r, "TOPLEFT", MAT_INDENT, -(PRODUCT_H + (k - 1) * MAT_LINE_H))
             c.name:SetWidth(nameW)
             c.price:SetWidth(MAT_PRICE_W)
+            c.price:ClearAllPoints()
+            c.price:SetPoint("RIGHT", c, "RIGHT", -MAT_RIGHT, 0)
 
             -- 右侧从右往左排: 本配方金额 → NPC 买价 → NPC 卖价 → 需要几个,
             -- 左边的余量全给材料名
@@ -1224,6 +1229,11 @@ local function GetRow(i)
         end
         c:SetScript("OnEnter", function(s) c.hoverOn(s) end)
         c:SetScript("OnLeave", function(s) c.hoverOff(s) end)
+        -- 左键点这一行 = 在拍卖行里搜这样材料 (买价那一格有自己的点击, 不冲突)
+        c:SetScript("OnMouseUp", function(_, button)
+            if button ~= "LeftButton" or not c.itemID then return end
+            ns.UI.SearchInAH(c.itemID, c.matName or PlainText(c.name and c.name:GetText()))
+        end)
         c:Hide()
         r.cells[k] = c
     end
@@ -1261,11 +1271,25 @@ local function GetRow(i)
 
     AnchorRowRight(r, true)
 
+    -- 左键点物品 = 在拍卖行里搜索它 (产物行搜产物, 材料行搜那样材料)。
+    -- 两个控件都是普通 Frame, 没有 OnClick, 所以自己接 OnMouseUp:
+    --   图标小框自己吃掉了鼠标事件, 要单独挂一次, 否则点图标没反应。
+    r.iconHit:SetScript("OnMouseUp", function(_, button)
+        if button ~= "LeftButton" then return end
+        ns.UI.SearchInAH(r.itemID,
+            r.rec and r.rec.name or PlainText(r.title and r.title:GetText()))
+    end)
+
     -- 行悬停: 只负责商品详情 (名称/技能/产出/材料/成本盈亏)。
     -- 材料行与图标各有自己的 OnEnter, 鼠标移到它们上面时由它们接管提示。
     r:SetScript("OnEnter", function(s)
         s.bg:SetColorTexture(1, 1, 1, 0.05)
         ns.UI.ShowRowTooltip(s, r)
+    end)
+    r:SetScript("OnMouseUp", function(_, button)
+        if button ~= "LeftButton" then return end
+        ns.UI.SearchInAH(r.itemID,
+            r.rec and r.rec.name or PlainText(r.title and r.title:GetText()))
     end)
     r:SetScript("OnLeave", function(s)
         s.bg:SetColorTexture(1, 1, 1, s.odd and 0.025 or 0)
@@ -1475,6 +1499,7 @@ RenderList = function()
                     local m = mats[k]
                     local c = r.cells[k]
                     SetCellIcon(c, m.id)
+                    c.matName = m.name      -- 点这一行去拍卖行搜索时用 (普通字符串, 带色码的不行)
                     SetCellNpc(c, m.id)
                     c.hl:Hide()     -- 行被复用: 上一个配方留下的悬停高亮要清掉
                     c.name:SetText(m.name or ("#" .. tostring(m.id)))
@@ -1648,6 +1673,38 @@ CheckRowPrice = function(r)
     end, true)   -- force: 点一次按钮就真的去拍卖行查一次, 不用缓存顶替
 end
 
+--------------------------------------------------------------------------- 点物品 → 拍卖行搜索
+
+-- 提示优先弹在面板里, 面板没显示时才写聊天框 (和查价那边的口径一致)
+local function Say(msg, hold)
+    if ns.UI.Notify and ns.UI.Notify(msg, hold or 4) then return end
+    ns.Print(msg)
+end
+
+-- 左键点物品 (产物 / 材料 / 材料汇总的任意一行) → 在拍卖行里搜索这件东西。
+-- 查价队列还在跑的时候先等它跑完: 那会儿插一条浏览查询会把正在读的结果顶掉。
+function ns.UI.SearchInAH(itemID, name)
+    local AH = ns.Auction
+    if not (AH and AH.Search) then
+        Say("|cffff5555查价模块未加载, 没法在拍卖行里搜索|r")
+        return
+    end
+    if not itemID then return end
+
+    AH.AwaitIdle(function()
+        local ok, info = AH.Search(itemID, name)
+        if ok then
+            Say(format("拍卖行已搜索: %s", tostring(info)), 2.5)
+        elseif info == "拍卖行未打开" then
+            Say("拍卖行没打开 · 打开拍卖行窗口后, 点物品就能直接搜它", 4.5)
+        elseif info == "物品名还没读到" then
+            Say("这件物品的名字客户端还没给, 等一秒再点", 3)
+        else
+            Say("搜不到: " .. tostring(info), 4)
+        end
+    end)
+end
+
 -- 悬浮明细: 产物/材料单价 · 成本 · 税后收入 · 利润
 function ns.UI.ShowPriceTooltip(anchor, r)
     local AH = ns.Auction
@@ -1770,6 +1827,8 @@ function ns.UI.ShowPriceTooltip(anchor, r)
 
     GameTooltip:AddLine(" ")
     GameTooltip:AddLine("取拍卖行当前最低单价 · 缓存 30 分钟", 0.55, 0.58, 0.63)
+    -- 新动作的发现入口: 放在我们自己的提示里, 不去占物品原生提示的位置
+    GameTooltip:AddLine("左键点物品 = 在拍卖行里搜索它", 0.55, 0.58, 0.63)
     GameTooltip:Show()
 end
 

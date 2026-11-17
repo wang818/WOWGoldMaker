@@ -650,6 +650,15 @@ function AH.Debug()
             .. " 单件=" .. (Hooks.item and "已注册" or "|cffff5555未注册")
             .. " 拍卖行打开=" .. (Hooks.ahShow and "已注册" or "|cffff5555未注册"))
     end
+
+    -- 「点物品直接在拍卖行搜索」用的接口: 浏览查询 + 拍卖行自己的搜索框
+    local t = _G.C_AuctionHouse
+    print("  浏览查询: " .. ((t and type(t.SendBrowseQuery) == "function")
+        and "有" or "|cffff5555无|r")
+        .. "   GetBrowseResults=" .. ((t and type(t.GetBrowseResults) == "function")
+        and "有" or "|cffff5555无|r"))
+    local sb, how = (AH.SearchBox and AH.SearchBox())
+    print("  搜索框: " .. (sb and ("有 (" .. tostring(how) .. ")") or "|cffff5555无|r"))
 end
 
 --------------------------------------------------------------------------- 对外: 缓存清单
@@ -701,4 +710,168 @@ function AH.Dump()
             ItemName(id), id, price, Ago(now - (e.ts or now))))
     end
     print("  |cff8a929e提示: 缺价大多是拍卖行里确实没人卖; 若写着「查询超时/查询失败」才是接口问题|r")
+end
+
+--------------------------------------------------------------------------- 对外: 在拍卖行里搜索某件物品
+
+-- 手动搜索会顶掉「正在读的那条查询」的结果 (拍卖行一次只保存一轮搜索结果),
+-- 所以先让路: 主动放弃队列里那几条, 别让它们等满超时再弹一句
+-- 「拍卖行没有回包」—— 那是我们自己造成的, 不是拍卖行的问题。
+-- 返回放弃了几条。
+function AH.Interrupt(reason)
+    reason = reason or "已改为手动搜索"
+    local dropped = 0
+
+    local function drop(e)
+        if not e then return end
+        queued[e.id] = nil
+        dropped = dropped + 1
+        Notify(e.id, { unit = nil, ts = Now(), reason = reason })
+    end
+
+    if inflight then
+        local e = inflight
+        inflight = nil
+        drop(e)
+    end
+    while #scanQueue > 0 do
+        drop(table.remove(scanQueue, 1))
+    end
+    return dropped
+end
+
+-- 等查询队列空下来再干活; 等不到就让队列让路 (手动操作优先)。
+-- 为什么必须等: 我们查价是「发 itemKey 查询 → 读这一件的搜索结果」, 中途插一条
+-- 浏览查询会把结果换成别的物品的, 正在读的那条就永远等不到数据了。
+function AH.AwaitIdle(fn, wait)
+    if type(fn) ~= "function" then return end
+    local step = 0.2
+    local tries = math.max(1, math.floor((wait or 3) / step))
+
+    local function tick(n)
+        if not AH.Busy() then
+            pcall(fn)
+            return
+        end
+        if n <= 0 then
+            AH.Interrupt("被手动搜索打断")
+            pcall(fn)
+            return
+        end
+        C_Timer.After(step, function() tick(n - 1) end)
+    end
+
+    tick(tries)
+end
+
+-- 浏览查询用的排序表: 每次新建。sorts 是查询表的一部分, 复用同一个表会和
+-- 上一次查询的引用搅在一起 (查价的 Sorts() 是共享的, 这里不能用它)
+local function SortList()
+    local s = {}
+    local e = _G.Enum and _G.Enum.AuctionHouseSortOrder
+    if e and e.Price ~= nil then
+        s[1] = { sortOrder = e.Price, reverseSort = false }
+    end
+    return s
+end
+
+-- 搜索词: 优先用调用方给的 (界面上已经显示出来的名字), 否则现查客户端。
+-- 界面上的名字可能带 |cff... 色码或 "×3" 后缀, 也可能只是 "物品 #123", 这些都不能拿去搜。
+local function SearchName(itemID, name)
+    if type(name) == "string" then
+        local t = name:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+            :gsub("^%s+", ""):gsub("%s+$", "")
+        if t ~= "" and not t:match("^物品%s*#") and not t:match("^#") then
+            return t
+        end
+    end
+    local n = ItemName(itemID)
+    if type(n) == "string" and n ~= "" and not n:match("^物品#") then return n end
+    return nil
+end
+
+local lastSearch     -- { id, at } 连点去重
+
+-- 拍卖行的搜索框。各家布局不一样 (现代是 AuctionHouseFrame.SearchBar, 老一点的是
+-- 全局 EditBox), 挨个找一遍。找不到只是不回填文字, 搜索本身照发。
+-- 回填的意义: 玩家能接着改条件, 而且看得出「现在搜的是什么」。
+local SEARCHBOX_NAMES = { "AuctionHouseFrameSearchBar", "AuctionFrameBrowse_SearchBox" }
+function AH.SearchBox()
+    local f = AHFrame()
+    local sb = f and f.SearchBar
+    if sb and type(sb.SetText) == "function" then return sb, "SearchBar" end
+    for i = 1, #SEARCHBOX_NAMES do
+        local g = _G[SEARCHBOX_NAMES[i]]
+        if g and type(g.SetText) == "function" then return g, SEARCHBOX_NAMES[i] end
+    end
+    return nil
+end
+
+-- 点物品 → 在拍卖行里「搜索这件东西」。
+--   走 SendBrowseQuery: 这正是玩家把名字敲进搜索框回车走的那条路, 结果直接落到
+--   拍卖行窗口自己的挂单列表里, 玩家还能接着改条件。
+--   失败再退回 SendSearchQuery (按 itemKey 精确查这一件): 结果同样显示在拍卖行窗口,
+--   只是搜索框里的词未必对得上。
+--   不用 exactMatch: 宁可多列几个名字相近的, 也别因为名字有一个字不同就搜出个空列表
+--   —— 玩家只会以为插件坏了。
+-- 返回 true, 搜索词 / false, 原因
+function AH.Search(itemID, name)
+    if not itemID then return false, "没有物品 ID" end
+    -- 搜索本身只要 SendBrowseQuery / SendSearchQuery 其中之一, 不需要读结果的接口
+    local api = _G.C_AuctionHouse
+    if type(api) ~= "table"
+        or (type(api.SendBrowseQuery) ~= "function" and type(api.SendSearchQuery) ~= "function") then
+        return false, "客户端缺少拍卖行查询 API"
+    end
+    if not AHOpen() then return false, "拍卖行未打开" end
+
+    local text = SearchName(itemID, name)
+    if not text then return false, "物品名还没读到" end
+
+    -- 连点两下别发两条 (拍卖行有频率上限, 而且第二条会顶掉第一条的结果)
+    local t = (type(GetTime) == "function" and GetTime()) or 0
+    if lastSearch and lastSearch.id == itemID and (t - lastSearch.at) < 1 then
+        return true, text
+    end
+
+    -- 搜索框里也填上: 玩家能接着改条件, 直接回车就是重新搜一次
+    local sb = AH.SearchBox()
+    if sb then pcall(sb.SetText, sb, text) end
+
+    local sorts = SortList()
+    local ok, err = false, nil
+
+    if type(api.SendBrowseQuery) == "function" then
+        local q = {
+            searchString     = text,
+            minLevel         = 0,
+            maxLevel         = 0,
+            itemClassFilters = {},
+            usableOnly       = false,
+            exactMatch       = false,
+            sorts            = sorts,
+        }
+        ok, err = pcall(api.SendBrowseQuery, q)
+        if not ok then
+            -- 有的版本把 sorts 放在第二个参数上
+            ok, err = pcall(api.SendBrowseQuery, q, sorts)
+        end
+    end
+
+    if not ok then
+        ok, err = pcall(api.SendSearchQuery, ItemKey(itemID), sorts, false)
+    end
+
+    if not ok then
+        local msg = tostring(err)
+        local low = msg:lower()
+        if low:find("restrict", 1, true) or low:find("protect", 1, true)
+            or low:find("taint", 1, true) then
+            msg = "客户端禁止插件搜索拍卖行"
+        end
+        return false, "搜索失败: " .. msg
+    end
+
+    lastSearch = { id = itemID, at = t }
+    return true, text
 end

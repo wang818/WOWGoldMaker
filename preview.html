@@ -459,11 +459,12 @@
 <div class="demo">
   <label><input type="checkbox" id="ahOpen"> 模拟：拍卖行窗口已打开</label>
   <label><input type="checkbox" id="tipExtra"> 悬停附带配方/价格（默认关，游戏里用 /wgm tip extra 切换）</label>
-  <span>未勾选时点「查价」→ 面板内浮层提示（不写聊天框）</span>
+  <span>未勾选时点「查价」或点物品 → 面板内浮层提示（不写聊天框）</span>
+  <span>左键点物品 = 在拍卖行里搜索它（钩选上面的「拍卖行已打开」可试）</span>
 </div>
 
 <div class="settings">
-  <h2><span>金币工坊</span> v0.6.7</h2>
+  <h2><span>金币工坊</span> v0.6.8</h2>
   <div class="sub">魔兽世界无限服 · 金币工具箱</div>
   <hr>
   <div class="row on" id="row1"><div class="box"><span class="check">✓</span></div><span class="lbl">登录后自动呼出主界面</span></div>
@@ -685,7 +686,7 @@
       summarize(p.rows).forEach(([n, c], i) => {
         const unit = (i * 733) % 8000 + 200;
         html += `<div class="blk${i % 2 ? " odd" : ""}">
-          <div class="pline">
+          <div class="pline" data-name="${n}">
             <div class="ico ${cls}"></div>
             <div class="prod">
               <div class="pname">${n}<span class="pnpc">NPC ${money(npcSellOf(n))}</span></div>
@@ -934,6 +935,25 @@
   });
   $npcEditor.querySelectorAll(".ne-btns button").forEach(b => {
     b.onclick = () => $npcEditor.classList.remove("on");
+  });
+
+  /* 左键点物品 (商品行 / 材料行) → 在拍卖行里搜索它 (对应 ns.UI.SearchInAH)。
+     「买价」格子和「查价」按钮有自己的点击, 这里先排除掉 */
+  $list.addEventListener("click", e => {
+    const t = e.target;
+    if (!t.closest || t.closest(".mbuy") || t.closest(".qbtn")) return;
+
+    const ml = t.closest(".mline");
+    const pl = t.closest(".pline");
+    const name = ml ? ml.dataset.n
+      : (pl && pl.dataset.name) || "";
+    if (!name) return;
+
+    if (!$ahOpen.checked) {
+      showToast("拍卖行没打开 · 打开拍卖行窗口后, 点物品就能直接搜它", 4500);
+      return;
+    }
+    showToast("拍卖行已搜索: " + name, 2500);
   });
 
   /* 截图/演示用: ?m=mats 直接进材料汇总模式 */

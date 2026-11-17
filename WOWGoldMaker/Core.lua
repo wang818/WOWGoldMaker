@@ -207,6 +207,16 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
         end
     elseif msg == "ah clear" or msg == "查价 清空" then
         if ns.Auction then ns.Auction.Clear() end
+    elseif msg:match("^search") or msg:match("^搜索") then
+        -- 手动试一下「在拍卖行里搜索某件物品」, 不用去列表里点
+        local id = tonumber(msg:match("(%d+)") or "")
+        if not id then
+            ns.Print("用法: /wgm search <物品ID>  (等同左键点列表里的这件物品)")
+        elseif ns.UI and ns.UI.SearchInAH then
+            ns.UI.SearchInAH(id)
+        else
+            ns.Print("|cffff5555界面模块未加载|r")
+        end
     elseif msg == "npc" or msg == "npc buy" then
         -- NPC 收购价是客户端自带的, 不用管; 这里只管玩家手记的「购买价」
         local n = (ns.NPC and ns.NPC.BuyCount()) or 0
@@ -264,6 +274,7 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
         print("  |cffe8c25a/wgm ah|r         拍卖行查价状态 (API / 是否打开 / 缓存)")
         print("  |cffe8c25a/wgm ah list|r    逐条列出缓存价格与缺价原因")
         print("  |cffe8c25a/wgm ah clear|r   清空价格缓存")
+        print("  |cffe8c25a/wgm search <ID>|r 在拍卖行里搜索该物品 (同左键点列表里的物品)")
         print("  |cffe8c25a/wgm npc|r        已记录的 NPC 购买价条数")
         print("  |cffe8c25a/wgm npc clear|r  清空手动录入的 NPC 购买价")
         print("  |cffe8c25a/wgm tip <ID>|r   诊断物品提示 (为什么只有名字 / 没有描述)")
