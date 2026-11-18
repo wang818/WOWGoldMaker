@@ -464,7 +464,7 @@
 </div>
 
 <div class="settings">
-  <h2><span>金币工坊</span> v0.7.1</h2>
+  <h2><span>金币工坊</span> v0.7.2</h2>
   <div class="sub">魔兽世界无限服 · 金币工具箱</div>
   <hr>
   <div class="row on" id="row1"><div class="box"><span class="check">✓</span></div><span class="lbl">登录后自动呼出主界面</span></div>
@@ -617,18 +617,18 @@
     return `${c}铜`;
   }
 
-  /* 精确到 1 铜 (对应 AH.MoneyEx): 1金 = 100银 = 100铜, 铜位不四舍五入掉 */
+  /* 精确到 1 铜 (对应 AH.MoneyEx): 1金 = 100银 = 100铜。
+     位数规则: 高位为 0 不写, 铜位一定写 (0 铜也写); 只有铜时不写金银 ——
+       12金34银56铜 / 1金23银0铜 / 5银0铜 / 45铜 */
   function moneyEx(c) {
     c = Math.abs(Math.round(c));
     const g = Math.floor(c / 10000);
     const s = Math.floor((c % 10000) / 100);
     const k = c % 100;
     if (g >= 100000) return "≈" + (g / 10000).toFixed(1) + "万金";
-    const parts = [];
-    if (g > 0) parts.push(g + "金");
-    if (s > 0) parts.push(s + "银");
-    if (k > 0 || parts.length === 0) parts.push(k + "铜");
-    return parts.join("");
+    if (g > 0) return g + "金" + s + "银" + k + "铜";
+    if (s > 0) return s + "银" + k + "铜";
+    return k + "铜";
   }
 
   /* 材料行金额: 与 UI.lua 的 MatPriceText 同一套分档 ——
@@ -643,9 +643,9 @@
     return w;
   }
   function matPriceHTML(unit, cnt, cw) {
-    const u = money(unit);
+    const u = moneyEx(unit);
     if (!(cnt > 1)) return u;
-    const t = money(unit * cnt);
+    const t = moneyEx(unit * cnt);
     const avail = cw - 2;
     const full = `${u}×${cnt} = ${t}`;
     if (approxWidth(full) <= avail) return full;
@@ -754,7 +754,8 @@
         });
     [...$list.querySelectorAll(".blk")].forEach((el, i) => { el._tip = tipRows[i]; });
 
-    // 查价按钮: 演示"查询中 n/m → 盈/亏"的过程
+    // 查价按钮: 演示"查询中 n/m → 盈/亏"的过程, 并且**每查回一条就先画一条**
+    // (对应实机 CheckRowPrice 的 onProgress → ApplyLivePrices)
     $list.querySelectorAll(".qbtn").forEach(btn => {
       btn.onclick = e => {
         e.stopPropagation();
@@ -769,54 +770,63 @@
           return;
         }
 
-        const total = 2 + row.querySelectorAll(".mline").length;
-        let done = 0;
+        const pline = row.querySelector(".pline");
+        const made = Number((pline && pline.dataset.made) || 1) || 1;
+        const mlines = [...row.querySelectorAll(".mline")];
+        const total = 1 + mlines.length;
+        const ps = row.querySelector(".psell");
+        const prices = row.querySelector(".prices");
+
+        // 上一轮的数字先擦掉 (实机点下去也清空, 免得看着像"点了没反应")
+        if (ps) { ps.className = "psell"; ps.textContent = ""; }
+        mlines.forEach(mc => {
+          const mp = mc.querySelector(".mprice");
+          if (mp) { mp.className = "mprice"; mp.textContent = ""; }
+        });
+        prices.innerHTML = "";
         btn.textContent = "查询中";
         cell.className = "price wait";
+        cell.textContent = `0/${total}`;
+
+        // 每点一次都当成一次全新查询 (对应游戏内 force 重查), 价格小幅浮动
+        btn._n = (btn._n || 0) + 1;
+        const seed = Number(btn.dataset.i) + 5 + btn._n * 3;
+        const sell = (seed * 1370) % 9000 + 800;
+        let cost = 0, done = 0;
+
         const timer = setInterval(() => {
-          done++;
-          if (done < total) {
-            cell.textContent = `${done}/${total}`;
-            return;
+          if (done === 0) {
+            // 第 1 条: 产物售价 → 商品名下方 (made > 1 时写整份的售价, 与盈亏口径一致)
+            if (ps) {
+              ps.className = "psell";
+              ps.innerHTML = made > 1
+                ? "售价 " + matPriceHTML(sell, made, ps.clientWidth - 20)
+                : "售价 " + moneyEx(sell) + "/个";
+            }
+          } else {
+            // 之后每条: 一样材料的金额 → 它自己那一行右侧, 顺手累加成本
+            const mc = mlines[done - 1];
+            const mp = mc && mc.querySelector(".mprice");
+            if (mp) {
+              const cnt = Number(mc.dataset.cnt || 1) || 1;
+              const unit = (seed * 733 + (done - 1) * 977) % 4000 + 150;
+              cost += unit * cnt;
+              mc.dataset.p = unit;               // 该行独立提示要用
+              mp.className = "mprice";
+              mp.innerHTML = matPriceHTML(unit, cnt, 84);
+            }
           }
+          done++;
+          cell.textContent = `${done}/${total}`;
+
+          if (done < total) return;
           clearInterval(timer);
           btn.textContent = "查价";
 
-          // 每点一次都当成一次全新查询 (对应游戏内 force 重查), 所以价格会小幅浮动,
-          // 不会像缓存那样点几次都是同一个数字
-          btn._n = (btn._n || 0) + 1;
-          const seed = Number(btn.dataset.i) + 5 + btn._n * 3;
-
-          // 产物售价 → 商品名下方 (made > 1 时写整份的售价, 与盈亏口径一致)
-          const pline = row.querySelector(".pline");
-          const made = Number((pline && pline.dataset.made) || 1) || 1;
-          const sell = (seed * 1370) % 9000 + 800;
-          const ps = row.querySelector(".psell");
-          if (ps) {
-            ps.className = "psell";
-            ps.innerHTML = made > 1
-              ? "售价 " + matPriceHTML(sell, made, ps.clientWidth - 20)
-              : "售价 " + moneyEx(sell) + "/个";
-          }
-
-          // 材料金额 → 每样材料那一行的右侧 (数量 > 1 时写出整份的钱), 顺手累加成本
-          let cost = 0;
-          row.querySelectorAll(".mline").forEach((mc, k) => {
-            const mp = mc.querySelector(".mprice");
-            if (!mp) return;
-            const cnt = Number(mc.dataset.cnt || 1) || 1;
-            const unit = (seed * 733 + k * 977) % 4000 + 150;
-            cost += unit * cnt;
-            mc.dataset.p = unit;                 // 该行独立提示要用
-            mp.className = "mprice";
-            mp.innerHTML = matPriceHTML(unit, cnt, 84);
-          });
-
-          // 两档盈亏: 成本相同, 只差成品卖给谁 (对应 ApplyPriceToRow)
+          // 全部回来的那一刻才算盈亏 (实机: 缺任何一项都不出盈亏)
           const ahProfit = Math.floor(sell * made * 0.95) - cost;
           const npcUnit = npcSellOf(pline ? pline.dataset.name : "");
           const npcProfit = npcUnit ? npcUnit * made - cost : null;
-          const prices = row.querySelector(".prices");
           prices.innerHTML = plHTML("AH", ahProfit) +
             (npcProfit === null
               ? `<div class="npcprice">NPC 不收</div>`

@@ -68,6 +68,8 @@ end
 
 -- 铜 → 精确到 1 铜的金额 (1金23银45铜)。盈亏用它: 1金 = 100银 = 100铜,
 -- 所有计算都是整数铜, 显示也不该把铜位四舍五入掉 (差 99 铜也是差)。
+-- 位数规则: 高位为 0 就不写, 但铜位一定要写 (「1金23银0铜」「99银0铜」「45铜」),
+-- 这样一眼能确认「这串数字到底精确到哪一位」, 不会把 0 铜看成本来就没算铜。
 function AH.MoneyEx(copper)
     local c = math.floor(math.abs(tonumber(copper) or 0))
     local g = math.floor(c / 10000)
@@ -78,12 +80,9 @@ function AH.MoneyEx(copper)
         -- 前面加 ≈ 让「这是约数」看得出来
         return format("≈%.1f万金", g / 10000)
     end
-    local parts = {}
-    if g > 0 then parts[#parts + 1] = format("%d金", g) end
-    if s > 0 then parts[#parts + 1] = format("%d银", s) end
-    -- 有金/银时, 铜为 0 就不写; 只有铜时一定要写
-    if k > 0 or #parts == 0 then parts[#parts + 1] = format("%d铜", k) end
-    return table.concat(parts)
+    if g > 0 then return format("%d金%d银%d铜", g, s, k) end
+    if s > 0 then return format("%d银%d铜", s, k) end
+    return format("%d铜", k)
 end
 
 local function Cache()
@@ -384,6 +383,13 @@ function AH.Preview(rec)
     return Calculate(rec, res)
 end
 
+-- 拿到一半结果也算一遍: 查价过程中界面每回一条就重画一次, 缺的那几项照实计成缺价。
+-- 不要用 Preview —— 它要求一项不缺, 少一样就整行不显示, 玩家会以为查价没反应。
+function AH.Partial(rec, res)
+    if not (rec and rec.item) then return nil end
+    return Calculate(rec, res or {})
+end
+
 --------------------------------------------------------------------------- 查询队列
 
 local scanQueue = {}   -- 待查: { id }
@@ -407,7 +413,9 @@ local function Notify(id, entry)
             if t.res[t.ids[j]] then done = done + 1 end
         end
         if t.onProgress then
-            pcall(t.onProgress, done, #t.ids, id)
+            -- 第 4 个参数是「到目前为止的结果」: 界面靠它把已经回来的价格先画上去,
+            -- 不用等整批查完 (材料里有一样没货时, 那一条要重试到超时, 干等十几秒)
+            pcall(t.onProgress, done, #t.ids, id, t.res)
         end
         if done >= #t.ids then
             local out = Calculate(t.rec, t.res)

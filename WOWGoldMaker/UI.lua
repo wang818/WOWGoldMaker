@@ -726,7 +726,7 @@ local ROW_GAP    = 8     -- 列间距
 local REQ_W      = 22    -- 技能等级 [300] 的宽度
 
 -- 前向声明: 下面几处都要用 —— 面板改宽时 RelayoutRows 要拿 RowColumns 重画金额
-local ApplyPriceToRow, CheckRowPrice, AnchorRowRight
+local ApplyPriceToRow, ApplyLivePrices, CheckRowPrice, AnchorRowRight
 
 local function RowColumns(w)
     -- 盈亏要写「AH 盈 1金23银45铜」这种带铜位的完整金额, 比原来的「盈 12银」长一截
@@ -793,10 +793,10 @@ end
 -- 材料改成竖排后每行有整行的宽度, 一般直接写得出「单价×3 = 合计」; 面板被拖窄时
 -- 再按可用宽度降级成「×3 合计」/「共合计」/「合计」。
 local function MatPriceText(AH, unit, cnt, cw, size)
-    local u = AH.Money(unit)
+    local u = AH.MoneyEx(unit)          -- 精确到铜: 差 1 铜也是差, 不能四舍五入掉
     if not cnt or cnt <= 1 then return u end
 
-    local t = AH.Money(unit * cnt)
+    local t = AH.MoneyEx(unit * cnt)
     local avail = (cw or 0) - 2
 
     local full = format("%s×%d = %s", u, cnt, t)
@@ -1469,9 +1469,9 @@ RenderList = function()
                 local e = ns.Auction and ns.Auction.Price(m.id)
                 if e and e.unit then
                     r.prodPrice:SetTextColor(T.rgb(C.gold))
-                    r.prodPrice:SetText("单价 " .. ns.Auction.Money(e.unit) .. "/个")
+                    r.prodPrice:SetText("单价 " .. ns.Auction.MoneyEx(e.unit) .. "/个")
                     r.price:SetTextColor(T.rgb(C.gold))
-                    r.price:SetText("共 " .. ns.Auction.Money(e.unit * (m.count or 1)))
+                    r.price:SetText("共 " .. ns.Auction.MoneyEx(e.unit * (m.count or 1)))
                 else
                     r.prodPrice:SetTextColor(T.rgb(C.faint))
                     r.prodPrice:SetText("未查价")
@@ -1530,31 +1530,16 @@ end
 
 --------------------------------------------------------------------------- 查价
 
--- 把查价结果画到行上:
---   商品行第二行 = 产物售价 (一次做多份时是整个产出), 每个材料行右侧 = 该材料花费,
---   商品行右侧 = 盈亏。数量 > 1 的材料写「单价×数量 = 合计」, 面板被拖窄时自动退化成
---   只写合计 (见 MatPriceText), 完整明细在悬停「查价」按钮的提示里。
-ApplyPriceToRow = function(r, out)
-    r.payload = out
+-- 只画「价钱」的那几处: 产物售价 (商品名下方) + 每样材料右侧的金额。
+-- 单独拆出来是为了查价过程中也能先画 —— onProgress 每回来一条就调一次,
+-- 玩家不用等整批查完。这很重要: 材料里只要有一项没货, 那一条就要重试到超时,
+-- 十几秒里界面一动不动, 看着就像「点了查价但价格没更新」。
+ApplyLivePrices = function(r, out)
     local AH = ns.Auction
-
-    local function clear()
-        r.prodPrice:SetText("")
-        r.npcPrice:SetText("")
-        for k = 1, (r.cellCount or 0) do
-            r.cells[k].price:SetText("")
-        end
-    end
-
-    if not out then
-        r.price:SetText("")
-        clear()
-        return
-    end
-
+    if not (AH and out) then return end
     local rec = out.rec
 
-    -- 产物售价 (商品名下方)
+    -- 产物售价
     -- 一次做多份 (made > 1) 时, 盈亏里的收入是按 made 份算的, 这里也写成整份的售价,
     -- 否则会出现「成本 30 银 / 售价 20 银 / 却显示赚钱」的对不上
     local prod = rec and out.unit and out.unit[rec.item]
@@ -1590,6 +1575,34 @@ ApplyPriceToRow = function(r, out)
             c.price:SetText("")
         end
     end
+end
+
+-- 把查价结果画到行上:
+--   商品行第二行 = 产物售价 (一次做多份时是整个产出), 每个材料行右侧 = 该材料花费,
+--   商品行右侧 = 盈亏。数量 > 1 的材料写「单价×数量 = 合计」, 面板被拖窄时自动退化成
+--   只写合计 (见 MatPriceText), 完整明细在悬停「查价」按钮的提示里。
+ApplyPriceToRow = function(r, out)
+    r.payload = out
+    local AH = ns.Auction
+
+    local function clear()
+        r.prodPrice:SetText("")
+        r.npcPrice:SetText("")
+        for k = 1, (r.cellCount or 0) do
+            r.cells[k].price:SetText("")
+        end
+    end
+
+    if not out then
+        r.price:SetText("")
+        clear()
+        return
+    end
+
+    local rec = out.rec
+
+    -- 产物售价 + 材料金额 (查价中途也走这一段)
+    ApplyLivePrices(r, out)
 
     -- 两行盈亏: 上 = 拍卖行 (扣 5% 税), 下 = NPC (卖给商人, 不抽成)。
     -- 金额精确到铜 (AH.MoneyEx): 1金 = 100银 = 100铜, 差 1 铜也要看得出来。
@@ -1660,6 +1673,12 @@ CheckRowPrice = function(r)
     r.price:SetTextColor(T.rgb(C.gold))
     r.price:SetText(format("0/%d", 1 + #(rec.mats or {})))
     r.npcPrice:SetText("")                -- 查询期间只留进度, 两行都别显示旧数字
+    -- 旧价钱也先擦掉: 材料里只要有一项没货, 这一轮就要重试到超时 (十几秒),
+    -- 期间留着一堆上一轮的数字, 看着就像「点了查价但价格没更新」
+    r.prodPrice:SetText("")
+    for k = 1, (r.cellCount or 0) do
+        r.cells[k].price:SetText("")
+    end
 
     AH.CheckRecipe(rec, function(out)
         if r.rec ~= rec then return end       -- 行已被别的配方复用, 状态交给 RenderList
@@ -1667,8 +1686,11 @@ CheckRowPrice = function(r)
         r.btn.text:SetText("查价")
         ApplyPriceToRow(r, out)
         AH.Report(out)
-    end, function(done, total)
+    end, function(done, total, _, partial)
         if r.rec ~= rec then return end
+        -- 已经查回来的先画上去 (管用的那几样立刻看到价钱), 没回来的照实空着。
+        -- 等整批查完再一次性上屏的话, 有一条超时就要干等十几秒才见数字。
+        if partial then ApplyLivePrices(r, AH.Partial(rec, partial)) end
         r.price:SetText(format("%d/%d", done, total))
     end, true)   -- force: 点一次按钮就真的去拍卖行查一次, 不用缓存顶替
 end
