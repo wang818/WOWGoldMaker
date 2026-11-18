@@ -206,31 +206,63 @@ local function CallID(fn, id, idx)
     return nil
 end
 
--- 可堆叠商品: unitPrice 本身就是单价; 万一这版返回的是整叠总价, 用 quantity 折算
+-- 这条挂单到底是不是我们要的那件物品。
+-- 拍卖行的名字搜索是「包含」匹配: 搜「亚麻布」会连「亚麻布卷」「亚麻布手套」一起
+-- 列出来。不认 ID 就会把别人的最低价当自己的, 算出来的成本/盈亏全是假的。
+-- 结果项里有 ID 就核对; 一个字段都取不到才按老样子用 (那说明接口本身按 key 过滤过)。
+local function ResultID(r)
+    if type(r) ~= "table" then return nil end
+
+    local k = r.itemKey
+    if type(k) == "table" then
+        local v = tonumber(k.itemID) or tonumber(k[1])
+        if v then return v end
+    end
+
+    local v = tonumber(r.itemID)
+    if v then return v end
+
+    local link = r.itemLink or r.itemHyperlink
+    if type(link) == "string" then
+        local s = link:match("item:(%d+)")
+        if s then return tonumber(s) end
+    end
+    return nil
+end
+
+-- 可堆叠商品: 单价字段在各版本叫法不一样 (unitPrice / minPrice 都是单价),
+-- 万一给的是整叠总价再用数量折算。老代码只认 unitPrice, 新版客户的 minPrice
+-- 一条都读不到 —— 这类物品就一直显示「无挂单」。
 local function ReadCommodity(id)
     local c = AHAPI()
     if not c then return nil, 0 end
     local n = tonumber(CallID(c.GetNumCommoditySearchResults, id)) or 0
 
-    local best, count = nil, 0
+    local best, count, other = nil, 0, 0
     for i = 1, n do
         local r = CallID(c.GetCommoditySearchResultInfo, id, i)
         if type(r) == "table" then
-            local unit = tonumber(r.unitPrice)
-            if not unit then
-                local total = tonumber(r.buyoutAmount)
-                    or tonumber(r.buyout)
-                    or tonumber(r.price)
-                local qty = tonumber(r.quantity) or 1
-                if total and qty > 0 then unit = total / qty end
-            end
-            if unit and unit > 0 then
-                count = count + 1
-                if not best or unit < best then best = unit end
+            local rid = ResultID(r)
+            if rid and id and rid ~= id then
+                other = other + 1          -- 名字相近的别的物品, 不算
+            else
+                local unit = tonumber(r.unitPrice) or tonumber(r.minPrice)
+                if not unit then
+                    local total = tonumber(r.buyoutAmount)
+                        or tonumber(r.buyout)
+                        or tonumber(r.price)
+                    local qty = tonumber(r.quantity)
+                        or tonumber(r.totalQuantity) or 1
+                    if total and qty > 0 then unit = total / qty end
+                end
+                if unit and unit > 0 then
+                    count = count + 1
+                    if not best or unit < best then best = unit end
+                end
             end
         end
     end
-    return best, count
+    return best, count, other
 end
 
 -- 单件拍卖: buyoutAmount 是整叠总价, 除以数量才是单价
@@ -239,34 +271,39 @@ local function ReadItems(key, id)
     if not c then return nil, 0 end
     local n = tonumber(CallID(c.GetNumItemSearchResults, key)) or 0
 
-    local best, count = nil, 0
+    local best, count, other = nil, 0, 0
     for i = 1, n do
         local r = CallID(c.GetItemSearchResultInfo, key, i)
         if type(r) == "table" then
-            local qty = tonumber(r.quantity) or 1
-            if qty < 1 then qty = 1 end
-            local total = tonumber(r.buyoutAmount)
-                or tonumber(r.bidAmount)
-                or tonumber(r.minBid)
-                or tonumber(r.buyout)
-                or tonumber(r.price)
-            if total and total > 0 then
-                local unit = total / qty
-                count = count + 1
-                if not best or unit < best then best = unit end
+            local rid = ResultID(r)
+            if rid and id and rid ~= id then
+                other = other + 1          -- 名字相近的别的物品, 不算
+            else
+                local qty = tonumber(r.quantity) or tonumber(r.totalQuantity) or 1
+                if qty < 1 then qty = 1 end
+                local total = tonumber(r.buyoutAmount)
+                    or tonumber(r.bidAmount)
+                    or tonumber(r.minBid)
+                    or tonumber(r.buyout)
+                    or tonumber(r.price)
+                if total and total > 0 then
+                    local unit = total / qty
+                    count = count + 1
+                    if not best or unit < best then best = unit end
+                end
             end
         end
     end
-    return best, count
+    return best, count, other
 end
 
 -- 不知道这个物品是可堆叠商品还是单件拍卖, 两种都读一次 (谁有价用谁)
 local function ReadAny(id, key)
-    local best, n = ReadCommodity(id)
-    if best then return best, n end
-    local b2, n2 = ReadItems(key, id)
-    if b2 then return b2, n2 end
-    return nil, (n or 0) + (n2 or 0)
+    local best, n, o1 = ReadCommodity(id)
+    if best then return best, n, o1 end
+    local b2, n2, o2 = ReadItems(key, id)
+    if b2 then return b2, n2, o2 end
+    return nil, (n or 0) + (n2 or 0), (o1 or 0) + (o2 or 0)
 end
 
 --------------------------------------------------------------------------- 计算
@@ -379,11 +416,17 @@ local function Notify(id, entry)
     end
 end
 
-FinishEntry = function(e, unit, n)
+FinishEntry = function(e, unit, n, other)
     -- unit 为 nil = 搜索成功但一条挂单都没有, 记成「无挂单」而不是留空,
     -- 否则界面上只能显示"缺 N 项", 分不清是没货还是查询出问题
+    -- other = 结果里混进来的、名字相近的别的物品条数 (已排除, 不算价)
     local entry = { unit = unit, n = n or 0, ts = Now() }
-    if not unit then entry.reason = "无挂单" end
+    if (other or 0) > 0 then entry.other = other end
+    if not unit then
+        entry.reason = (other or 0) > 0
+            and format("无挂单 (另有 %d 条名字相近的物品, 已排除)", other)
+            or "无挂单"
+    end
     Cache()[e.id] = entry
     queued[e.id] = nil
     if inflight == e then inflight = nil end
@@ -453,9 +496,9 @@ StartQuery = function(e)
 
         -- 事件没来但数据已经在本地 (同一物品之前查过、客户端认为"没变化"就不再发事件):
         -- 直接读一次, 别白白重试
-        local best, n = ReadAny(e.id, e.key)
+        local best, n, other = ReadAny(e.id, e.key)
         if best then
-            FinishEntry(e, best, n)
+            FinishEntry(e, best, n, other)
             return
         end
 
@@ -501,23 +544,33 @@ ev:SetScript("OnEvent", function(_, event, arg)
     local e = inflight
     if not e then return end
 
-    local id, best, n
     if event == "COMMODITY_SEARCH_RESULTS_UPDATED" then
-        id = tonumber(arg)
-        if id ~= e.id then return end
-        best, n = ReadCommodity(id)
+        if tonumber(arg) ~= e.id then return end
+        e.gotComm = true
     elseif event == "ITEM_SEARCH_RESULTS_UPDATED" then
         -- arg 是 ItemKey, 各版本字段名不一致 (itemID / [1] / 甚至没有)。
         -- 队列串行, 同时只有一条 inflight, 所以取不到 ID 时也按它自己读一次:
         -- ReadItems 用的是我们这次搜索的 key, 不会串到拍卖行窗口自己的搜索结果上。
-        id = (type(arg) == "table") and (tonumber(arg.itemID) or tonumber(arg[1])) or tonumber(arg)
+        local id = (type(arg) == "table")
+            and (tonumber(arg.itemID) or tonumber(arg[1])) or tonumber(arg)
         if id and id ~= e.id then return end
-        best, n = ReadItems(e.key, e.id)
+        e.gotItem = true
     else
         return
     end
 
-    FinishEntry(e, best, n)
+    -- 商品和单件是两套结果, 两个事件各来一次。只读来的那一套会出错:
+    -- 先到的若是空的那套, 就会把结论锁成「无挂单」, 后面有货的那套来了也不管了。
+    -- 所以每次事件都两边读一遍, 而且要等两套都回过话才算数。
+    local best, n, other = ReadAny(e.id, e.key)
+
+    -- 某个事件名在这版客户端注册不上时, 收到另一个就能定论
+    local settled = best ~= nil
+        or (e.gotItem and (e.gotComm or not Hooks.commodity))
+        or (e.gotComm and not Hooks.item)
+    if not settled then return end    -- 等另一套回包; 实在不来还有超时兜底
+
+    FinishEntry(e, best, n, other)
 end)
 
 --------------------------------------------------------------------------- 对外: 查一个配方
@@ -704,7 +757,8 @@ function AH.Dump()
         local e = c[id]
         local price
         if e.unit then
-            price = format("|cffe8c25a%s|r · 挂单 %d", AH.Money(e.unit), e.n or 0)
+            price = format("|cffe8c25a%s|r · 挂单 %d%s", AH.Money(e.unit), e.n or 0,
+                e.other and format(" (另有 %d 条别的物品, 已排除)", e.other) or "")
         else
             price = "|cffff9955" .. (e.reason or "无挂单") .. "|r"
         end
@@ -1096,6 +1150,66 @@ function AH.SearchCount(itemID)
     end
 
     return item, comm, browse
+end
+
+-- 把某件物品的原始挂单逐条打出来: 结果项里到底有哪些字段, 一眼看清。
+-- 怀疑「查价不对」时先看这个 —— 混进来的别的物品、读不到的字段都藏在这里。
+function AH.DumpItem(itemID)
+    itemID = tonumber(itemID)
+    if not itemID then return end
+    local c = AHAPI()
+    if not c then ns.Print("|cffff5555客户端缺少拍卖行 API|r") return end
+    if not AHOpen() then ns.Print("|cffff5555拍卖行没打开|r") return end
+
+    local key = ItemKey(itemID)
+    pcall(c.SendSearchQuery, key, SortList(), false)   -- 现查, 不吃缓存
+
+    C_Timer.After(1.5, function()
+        local nI = tonumber(CallID(c.GetNumItemSearchResults, key)) or 0
+        local nC = tonumber(CallID(c.GetNumCommoditySearchResults, itemID)) or 0
+        ns.Print(format("物品 #%d %s · 单件 %d 条 / 商品 %d 条",
+            itemID, tostring(ItemName(itemID) or "?"), nI, nC))
+
+        local hasID, mixed = false, 0
+        local function dump(tag, getter, n)
+            local shown = 0
+            for i = 1, n do
+                if shown >= 6 then break end
+                local r = getter(i)
+                if type(r) == "table" then
+                    shown = shown + 1
+                    local rid = ResultID(r)
+                    if rid then
+                        hasID = true
+                        if rid ~= itemID then mixed = mixed + 1 end
+                    end
+                    local keys = {}
+                    for k in pairs(r) do keys[#keys + 1] = tostring(k) end
+                    table.sort(keys)
+                    print(format("  %s#%d id=%s qty=%s 价=%s |cff8a929e%s|r",
+                        tag, i, tostring(rid),
+                        tostring(r.quantity or r.totalQuantity),
+                        tostring(r.buyoutAmount or r.minPrice or r.unitPrice or r.bidAmount),
+                        table.concat(keys, ",")))
+                end
+            end
+        end
+
+        dump("单件", function(i) return CallID(c.GetItemSearchResultInfo, key, i) end, nI)
+        dump("商品", function(i) return CallID(c.GetCommoditySearchResultInfo, itemID, i) end, nC)
+
+        local best, cnt, other = ReadAny(itemID, key)
+        print(format("  → 单价 %s · %d 条可用 · 排除 %d 条名字相近的别的物品",
+            best and AH.Money(best) or "无", cnt or 0, other or 0))
+
+        if not hasID then
+            print("  |cffff5555结果项里没有物品 ID 字段|r: 没法核对, 只能按接口的 key 认")
+        elseif mixed > 0 then
+            print("  |cffff5555前几条里就有别的物品|r: 就是这个原因, 已按 ID 排除 (见上面的 id=)")
+        else
+            print("  |cff5ad46a结果项都带物品 ID, 前几条也都是这一件|r")
+        end
+    end)
 end
 
 -- 搜索这条路的体检: 哪一环通、哪一环不通, 一条条列出来。

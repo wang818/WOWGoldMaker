@@ -193,6 +193,13 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
         else
             ns.Print("|cffff5555专业模块未加载|r")
         end
+    elseif msg:match("^ah%s+%d+$") then
+        -- 把这件物品的原始挂单逐条列出来 (怀疑查价不对时用)
+        if ns.Auction and ns.Auction.DumpItem then
+            ns.Auction.DumpItem(tonumber(msg:match("(%d+)")))
+        else
+            ns.Print("|cffff5555查价模块未加载|r")
+        end
     elseif msg == "ah" or msg == "price" or msg == "查价" then
         if ns.Auction then
             ns.Auction.Debug()
@@ -277,6 +284,7 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
         print("  |cffe8c25a/wgm icons|r      诊断专业/物品图标能否解析")
         print("  |cffe8c25a/wgm ah|r         拍卖行查价状态 (API / 是否打开 / 缓存)")
         print("  |cffe8c25a/wgm ah list|r    逐条列出缓存价格与缺价原因")
+        print("  |cffe8c25a/wgm ah <ID>|r     逐条列出该物品的原始挂单 (查价对不上时用)")
         print("  |cffe8c25a/wgm ah clear|r   清空价格缓存")
         print("  |cffe8c25a/wgm search <ID>|r 在拍卖行里搜索该物品 (同左键点列表里的物品)")
         print("  |cffe8c25a/wgm npc|r        已记录的 NPC 购买价条数")
