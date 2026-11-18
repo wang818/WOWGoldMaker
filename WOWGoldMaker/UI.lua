@@ -1681,6 +1681,9 @@ local function Say(msg, hold)
     ns.Print(msg)
 end
 
+-- 自动体检只打一次: 搜不到时打一次有用, 每次都打就是刷屏
+local searchDiagDone
+
 -- 左键点物品 (产物 / 材料 / 材料汇总的任意一行) → 在拍卖行里搜索这件东西。
 -- 查价队列还在跑的时候先等它跑完: 那会儿插一条浏览查询会把正在读的结果顶掉。
 function ns.UI.SearchInAH(itemID, name)
@@ -1702,16 +1705,22 @@ function ns.UI.SearchInAH(itemID, name)
                 local item, comm, browse = AH.SearchCount(itemID)
                 local n = (item or 0) + (comm or 0)
                 local any = n > 0 or (browse or 0) > 0
+                local byButton = tostring(way):find("(按钮)", 1, true) ~= nil
                 if any then
-                    if way and way ~= "搜索栏(按钮)" then
+                    if not byButton then
                         Say(format("搜到 %d 条 (走的是%s)", math.max(n, browse or 0), tostring(way)), 3)
                     end
                     return
                 end
-                if way == "搜索栏(按钮)" then
+                if byButton then
                     Say("拍卖行返回 0 条 · 这件东西现在没人卖; 若别的物品也这样, /wgm search <ID> 看诊断", 6)
                 else
                     Say("拍卖行返回 0 条 (走的" .. tostring(way) .. ") · /wgm search <ID> 看诊断", 6)
+                end
+                -- 搜出去却是 0 条: 自动打一次体检, 省得来回问 (只打一次, 别刷屏)
+                if not searchDiagDone and AH.SearchDiag then
+                    searchDiagDone = true
+                    AH.SearchDiag(itemID)
                 end
             end)
         elseif info == "拍卖行未打开" then

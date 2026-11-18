@@ -493,6 +493,8 @@ ev:SetScript("OnEvent", function(_, event, arg)
     -- 所以这里不再 Raise —— 一边 SetFrameLevel(1) 压到同层最低、一边 Raise 顶到最上,
     -- 两者是矛盾的。查价时靠页面浮层提示, 不依赖面板可见。
     if event == "AUCTION_HOUSE_SHOW" then
+        -- 窗口重开时控件可能重建, 搜索栏的缓存作废, 下次重新探
+        if AH.SearchUI then AH.SearchUI(true) end
         return
     end
 
@@ -790,50 +792,200 @@ local function SearchName(itemID, name)
     return nil
 end
 
-local lastSearch     -- { id, at } 连点去重
+local lastSearch     -- { id, at, way, text } 连点去重 + 诊断
 
--- 拍卖行的搜索框。各家布局不一样 (现代是 AuctionHouseFrame.SearchBar, 老一点的是
--- 全局 EditBox), 挨个找一遍。找不到只是不回填文字, 搜索本身照发。
--- 回填的意义: 玩家能接着改条件, 而且看得出「现在搜的是什么」。
-local SEARCHBOX_NAMES = { "AuctionHouseFrameSearchBar", "AuctionFrameBrowse_SearchBox" }
-function AH.SearchBox()
-    local f = AHFrame()
-    local sb = f and f.SearchBar
-    if sb and type(sb.SetText) == "function" then return sb, "SearchBar" end
-    for i = 1, #SEARCHBOX_NAMES do
-        local g = _G[SEARCHBOX_NAMES[i]]
-        if g and type(g.SetText) == "function" then return g, SEARCHBOX_NAMES[i] end
+--------------------------------------------------------------------------- 找搜索栏
+
+-- 这一步是整件事的关键, 也是之前踩坑的地方: 控件名猜错等于什么都没做
+-- (字没填进真框里、按钮没点到), 界面上就是「搜索框空的 + 列表空的」。
+-- Frame 是 userdata, 不能 pairs 遍历, 只能问它要子控件再按类型筛:
+-- 拍卖行窗口里能填字的输入框就那么一个, 找得到。
+
+local function Children(o)
+    if (type(o) ~= "userdata" and type(o) ~= "table") or type(o.GetChildren) ~= "function" then
+        return nil
+    end
+    local ok, list = pcall(function() return { o:GetChildren() } end)
+    if ok and type(list) == "table" and #list > 0 then return list end
+    return nil
+end
+
+local function ObjType(o)
+    if (type(o) ~= "userdata" and type(o) ~= "table") or type(o.GetObjectType) ~= "function" then
+        return nil
+    end
+    local ok, t = pcall(o.GetObjectType, o)
+    if ok then return t end
+    return nil
+end
+
+local function CtlName(o)
+    if not o or type(o.GetName) ~= "function" then return nil end
+    local ok, n = pcall(o.GetName, o)
+    if ok and type(n) == "string" and n ~= "" then return n end
+    return nil
+end
+
+local function CtlShown(o)
+    if not o or type(o.IsShown) ~= "function" then return true end
+    local ok, v = pcall(o.IsShown, o)
+    if ok then return v and true or false end
+    return true
+end
+
+local function CtlParent(o)
+    if not o or type(o.GetParent) ~= "function" then return nil end
+    local ok, p = pcall(o.GetParent, o)
+    if ok then return p end
+    return nil
+end
+
+-- 名字里含 want 的先要; 没给 want 就要第一个看得见的同类控件
+local function FindCtl(root, kind, want, depth)
+    depth = depth or 3
+    if not root or depth < 0 then return nil end
+    local list = Children(root)
+    if not list then return nil end
+
+    local first
+    for i = 1, #list do
+        local c = list[i]
+        if ObjType(c) == kind then
+            if not want then
+                if CtlShown(c) then return c end
+                first = first or c
+            else
+                local n = CtlName(c)
+                if n and n:lower():find(want, 1, true) then return c end
+            end
+        end
+    end
+    if first then return first end
+    for i = 1, #list do
+        local got = FindCtl(list[i], kind, want, depth - 1)
+        if got then return got end
     end
     return nil
 end
 
--- 填搜索框 + 点「搜索」按钮 —— 这就是玩家自己敲名字回车走的那条路。
--- 为什么不自己拼 browse query: 那张查询表是客户端 UI 在点击时用它自己的一整套字段
--- 现拼的, 手拼的表哪怕只差一个字段, 拍卖行也照收不误却回 0 条, 界面上只留一句
--- 「未发现物品」—— 看着像插件坏了, 实际是查询根本不匹配。让 UI 自己拼就不会错。
-local function ClickSearch(sb, text)
-    -- 搜索框: 现代是 SearchBar.SearchBox, 有的版本直接把 SetText 挂在 SearchBar 上
-    local box = sb.SearchBox or sb
-    if type(box.SetText) == "function" then
-        pcall(box.SetText, box, text)
-    elseif type(sb.SetText) == "function" then
-        pcall(sb.SetText, sb, text)
+-- 老式界面把搜索框做成全局 EditBox; SearchBar 找不到时再看这些名字
+local SEARCHBOX_NAMES = {
+    "AuctionHouseFrameSearchBox", "AuctionHouseFrameSearchBar",
+    "AuctionFrameBrowse_SearchBox", "AuctionFrameSearchBox",
+}
+
+-- 窗口对象的全局名也可能不一样: 在 UIParent 的直接子级里找名字含 Auction 的那个。
+-- 拍卖行窗口有且只有一个, 顶多再撞到"拍卖行小助手"之类的插件面板, 那些不叫这个名。
+local function FindAuctionFrame()
+    local f = AHFrame()
+    if f then return f end
+    local kids = Children(_G.UIParent)
+    if not kids then return nil end
+    for i = 1, #kids do
+        local n = CtlName(kids[i])
+        if n and n:lower():find("auction", 1, true) and CtlShown(kids[i]) then
+            return kids[i]
+        end
+    end
+    return nil
+end
+
+local searchUI
+
+-- 找一次就缓存 (rebuild 时重探: 界面配置换了控件会重建)
+-- 返回 { box=EditBox, btn=搜索按钮, bar=搜索栏容器, how=从哪找到的 } / nil
+function AH.SearchUI(rebuild)
+    if searchUI and not rebuild then
+        -- 上次没摸到按钮就别一直用那份缓存: 窗口第一次构建时按钮可能还没出来
+        if searchUI.btn or not searchUI.bar then return searchUI end
+        rebuild = true
+    end
+    searchUI = nil
+
+    local f = FindAuctionFrame()
+    local bars = {}
+    local function add(o, tag) if o then bars[#bars + 1] = { o = o, tag = tag } end end
+    if f then
+        add(f.SearchBar, "SearchBar")
+        local bf = f.BrowseFrame
+        if bf then add(bf.SearchBar, "BrowseFrame.SearchBar") end
+    end
+    for i = 1, #SEARCHBOX_NAMES do add(_G[SEARCHBOX_NAMES[i]], SEARCHBOX_NAMES[i]) end
+
+    for i = 1, #bars do
+        local b, tag = bars[i].o, bars[i].tag
+        local box = (ObjType(b) == "EditBox") and b or nil
+        if not box then
+            local cand = b.SearchBox
+            if cand and type(cand.SetText) == "function" then box = cand end
+        end
+        if not box then box = FindCtl(b, "EditBox", "search", 3) end
+        if not box then box = FindCtl(b, "EditBox", nil, 3) end
+
+        if box and type(box.SetText) == "function" then
+            local btn, bar
+            if ObjType(b) == "EditBox" then
+                -- 全局名给出来就是个 EditBox: 按钮在它父层
+                bar = CtlParent(box)
+                if bar then btn = FindCtl(bar, "Button", "search", 2) end
+            else
+                bar = b
+                btn = b.SearchButton
+                if not btn then btn = FindCtl(b, "Button", "search", 2) end
+            end
+            searchUI = { box = box, btn = btn, bar = bar, how = tag }
+            return searchUI
+        end
     end
 
-    -- 搜索框空着的时候按钮是灰的, 点下去等于没点, 先强行启用
-    local btn = sb.SearchButton
+    -- 兜底: 在整个拍卖行窗口里挖
+    if f then
+        local box = FindCtl(f, "EditBox", "search", 4)
+        if box then
+            searchUI = { box = box, btn = FindCtl(f, "Button", "search", 4), bar = nil, how = "窗口内探测" }
+            return searchUI
+        end
+    end
+    return nil
+end
+
+-- 旧的取法留着 (诊断和别处按「框 + 来源」用)
+function AH.SearchBox()
+    local ui = AH.SearchUI()
+    if not ui then return nil end
+    return ui.box, ui.how
+end
+
+-- 填搜索框 + 点搜索按钮 —— 玩家自己敲名字回车走的那条路。
+-- 填完必须回读确认: 有的框受保护, SetText 静默失败, 不确认就是「什么都没发生」,
+-- 而界面上只留一句「未发现物品」, 看着像搜过了其实一次都没发出去。
+local function ClickSearch(ui, text)
+    local box = ui.box
+    if not (box and type(box.SetText) == "function") then return false, "没有搜索框" end
+    if not pcall(box.SetText, box, text) then return false, "填不进去" end
+    if type(box.GetText) == "function" then
+        local ok, v = pcall(box.GetText, box)
+        if not (ok and v == text) then return false, "填不进去" end
+    end
+
+    -- 搜索框空着时按钮是灰的, 点下去等于没点, 先强行启用
+    local btn = ui.btn
     if btn and type(btn.Click) == "function" then
         if type(btn.Enable) == "function" then pcall(btn.Enable, btn) end
         if pcall(btn.Click, btn) then return true, "按钮" end
     end
-    if type(sb.OnSearchButtonClicked) == "function"
-        and pcall(sb.OnSearchButtonClicked, sb) then
-        return true, "按钮回调"
+
+    local bar = ui.bar
+    if bar then
+        if type(bar.OnSearchButtonClicked) == "function"
+            and pcall(bar.OnSearchButtonClicked, bar) then
+            return true, "按钮回调"
+        end
+        if type(bar.OnEnterPressed) == "function" and pcall(bar.OnEnterPressed, bar) then
+            return true, "回车"
+        end
     end
-    if type(sb.OnEnterPressed) == "function" and pcall(sb.OnEnterPressed, sb) then
-        return true, "回车"
-    end
-    return false
+    return false, "按钮点不动"
 end
 
 -- 点物品 → 在拍卖行里「搜索这件东西」。
@@ -862,10 +1014,14 @@ function AH.Search(itemID, name)
 
     local ok, way, err = false, nil, nil
 
-    local sb = AH.SearchBox()
-    if sb then
-        local fired, how = ClickSearch(sb, text)
-        if fired then ok, way = true, "搜索栏" .. (how and ("(" .. how .. ")") or "") end
+    local ui = AH.SearchUI()
+    if ui then
+        local fired, how = ClickSearch(ui, text)
+        if fired then
+            ok, way = true, ui.how .. "(" .. tostring(how) .. ")"
+        else
+            err = "搜索栏按钮点不动 (" .. ui.how .. ")"
+        end
     end
 
     if not ok and type(api.SendBrowseQuery) == "function" then
@@ -879,11 +1035,14 @@ function AH.Search(itemID, name)
             sorts            = SortList(),
         }
         ok, err = pcall(api.SendBrowseQuery, q)
-        if not ok then
-            -- 有的版本把 sorts 放在第二个参数上
-            ok, err = pcall(api.SendBrowseQuery, q, SortList())
+        if ok then
+            way = "browse 查询"
+        else
+            -- sorts 结构万一对不上, 退一步不要排序 (服务器给默认)
+            q.sorts = {}
+            ok, err = pcall(api.SendBrowseQuery, q)
+            if ok then way = "browse 查询(不排序)" end
         end
-        if ok then way = "browse 查询" end
     end
 
     if not ok and type(api.SendSearchQuery) == "function" then
@@ -954,18 +1113,29 @@ function AH.SearchDiag(itemID)
     print("  API: SendBrowseQuery=" .. has("SendBrowseQuery")
         .. " SendSearchQuery=" .. has("SendSearchQuery")
         .. " GetBrowseResults=" .. has("GetBrowseResults"))
-    print("  窗口: " .. (AHOpen() and "已打开" or "|cffff5555未打开|r")
-        .. "   物品名: " .. tostring(ItemName(itemID) or "?"))
+    local f = FindAuctionFrame()
+    print("  窗口: " .. (f and (CtlShown(f) and "已打开" or "|cffff5555未打开|r")
+        or "|cffff5555找不到窗口对象|r")
+        .. "   控件=" .. tostring(CtlName(f) or "|cffff5555无名字|r")
+        .. "   物品名=" .. tostring(ItemName(itemID) or "?"))
 
-    local sb, how = AH.SearchBox()
-    if sb then
-        local box = sb.SearchBox or sb
-        print("  搜索栏: " .. tostring(how)
-            .. "   搜索框=" .. (sb.SearchBox and "有" or "无(直接挂在栏上)")
-            .. "   按钮=" .. (sb.SearchButton and "有" or "|cffff5555无|r")
-            .. "   能填字=" .. (type(box.SetText) == "function" and "是" or "|cffff5555否|r"))
+    -- 重探一次: 诊断要的是此刻的真实结构, 不吃缓存
+    local ui = AH.SearchUI(true)
+    if ui then
+        print("  搜索控件: 来源=" .. tostring(ui.how)
+            .. "   框=" .. tostring(CtlName(ui.box) or "(无名字)")
+            .. "   按钮=" .. (ui.btn and tostring(CtlName(ui.btn) or "(无名字)") or "|cffff5555无|r"))
+        -- 顺手验一下字到底填不填得进去 (填完再读回来对比)
+        if type(ui.box.GetText) == "function" then
+            local okG, before = pcall(ui.box.GetText, ui.box)
+            local okS = pcall(ui.box.SetText, ui.box, "测试")
+            local okG2, after = pcall(ui.box.GetText, ui.box)
+            pcall(ui.box.SetText, ui.box, okG and before or "")
+            print("  填字测试: 设成「测试」读回「" .. tostring(after)
+                .. "」" .. ((okS and okG2 and after == "测试") and " |cff5ad46a可以|r" or " |cffff5555不行|r"))
+        end
     else
-        print("  搜索栏: |cffff5555没找到|r (只能直接发查询, 窗口里不会有回填的名字)")
+        print("  搜索控件: |cffff5555一个都没找到|r (只能直接发查询, 窗口里不会有回填的名字)")
     end
 
     if lastSearch and lastSearch.id == itemID then
