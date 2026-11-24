@@ -54,15 +54,20 @@ function ns.BuildSettings()
         function(v) db.autoShow = v end)
     cb1:SetPoint("TOPLEFT", 20, -92)
 
+    local cb3 = T.Checkbox(panel, "打开拍卖行时自动显示 (关掉拍卖行一起收起)",
+        function() return db.ahAutoShow end,
+        function(v) db.ahAutoShow = v end)
+    cb3:SetPoint("TOPLEFT", 20, -124)
+
     local cb2 = T.Checkbox(panel, "启用界面动画",
         function() return db.animations end,
         function(v) db.animations = v end)
-    cb2:SetPoint("TOPLEFT", 20, -124)
+    cb2:SetPoint("TOPLEFT", 20, -156)
 
     -- 重置按钮
     local reset = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
     reset:SetSize(140, 24)
-    reset:SetPoint("TOPLEFT", 20, -160)
+    reset:SetPoint("TOPLEFT", 20, -192)
     reset:SetText("重置窗口位置")
     reset:SetScript("OnClick", function()
         ns.ResetPosition()
@@ -82,7 +87,7 @@ function ns.BuildSettings()
 
     -- 命令说明
     local help = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-    help:SetPoint("TOPLEFT", 20, -208)
+    help:SetPoint("TOPLEFT", 20, -240)
     help:SetJustifyH("LEFT")
     help:SetTextColor(T.rgb(C.muted))
     help:SetText("|cffe8c25a/wgm|r        开关主界面\n|cffe8c25a/wgm reset|r  重置位置\n|cffe8c25a/wgm config|r 打开本设置页")

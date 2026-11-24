@@ -6,7 +6,17 @@
 local ADDON, ns = ...
 
 ns.ADDON   = ADDON
-ns.VERSION = "0.1.0"
+-- 版本号直接从 .toc 读, 免得两处对不上 (以前这里写死 0.1.0, 设置页一直显示旧号)
+ns.VERSION = (function()
+    local v
+    pcall(function()
+        if C_AddOns and C_AddOns.GetAddOnMetadata then
+            v = C_AddOns.GetAddOnMetadata(ADDON, "Version")
+        end
+    end)
+    if not v then pcall(function() v = GetAddOnMetadata(ADDON, "Version") end) end
+    return v or "0.0.0"
+end)()
 
 local function ClientVersion()
     -- 兼容处理: 部分客户端 (含无限服) 第 4 个返回值可能是字符串, 统一 tonumber
@@ -22,6 +32,7 @@ ns.IsForever     = ClientVersion() >= 16000 and ClientVersion() < 20000
 
 local DEFAULTS = {
     autoShow   = false,                                   -- 登录后自动呼出
+    ahAutoShow = true,                                    -- 打开拍卖行时自动呼出
     animations = true,                                    -- 界面动画
     pos        = { point = "RIGHT", relPoint = "RIGHT", x = 0, y = 0 },   -- 屏幕右侧垂直居中
     strata     = "DIALOG",                                -- 主面板层级 (DIALOG = 压在 EllesmereUI 上层)
@@ -31,6 +42,9 @@ local DEFAULTS = {
 }
 
 local db
+-- 面板是不是「跟着拍卖行自己弹出来的」。只有这种才在拍卖行关掉时替玩家收起;
+-- 玩家用 /wgm 手动开的, 关拍卖行不该替他关。
+local ahAuto = false
 
 local function MergeDefaults(t, defaults)
     for k, v in pairs(defaults) do
@@ -82,6 +96,39 @@ ev:RegisterEvent("ADDON_LOADED")
 ev:RegisterEvent("PLAYER_ENTERING_WORLD")
 ev:RegisterEvent("PLAYER_MONEY")
 ev:RegisterEvent("PLAYER_LEVEL_UP")
+ev:RegisterEvent("AUCTION_HOUSE_SHOW")
+-- AUCTION_HOUSE_CLOSED 在部分客户端不叫这个名字, 注册不上就算了:
+-- 收不起来顶多是面板留在原地, 不影响查价
+pcall(function() ev:RegisterEvent("AUCTION_HOUSE_CLOSED") end)
+
+-- 拍卖行开关时面板的显隐。
+-- 开: 把面板叫出来 (查价、算利润都要用它, 每次手打 /wgm 太啰嗦; 设置里可以关掉);
+-- 关: 只收「自己弹出来的」那个 —— 玩家用 /wgm 手动开的, 关拍卖行不该替他关。
+local function OnAuctionHouseEvent(event)
+    if event == "AUCTION_HOUSE_SHOW" then
+        if not (db and db.ahAutoShow) then return end
+        if not (ns.UI and ns.UI.Show) then return end
+
+        if not ns.frame then
+            if not ns.UI.Build then return end
+            local ok, err = pcall(ns.UI.Build)
+            if not ok then
+                ns.Print("|cffff5555界面构建失败:|r " .. tostring(err))
+                return
+            end
+        end
+
+        -- 登录时已经自己弹出来的 (db.autoShow), 就别算成"跟着拍卖行走", 免得关窗口时被收走
+        local wasShown = ns.frame and ns.frame:IsShown()
+        ns.UI.Show()
+        if not wasShown then ahAuto = true end
+        return
+    end
+
+    if not ahAuto then return end
+    ahAuto = false
+    if ns.UI and ns.UI.Hide then ns.UI.Hide() end
+end
 
 ev:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
     if event == "ADDON_LOADED" and arg1 == ADDON then
@@ -117,6 +164,9 @@ ev:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
         if ns.UI and ns.UI.RefreshStats then
             ns.UI.RefreshStats()
         end
+
+    elseif event == "AUCTION_HOUSE_SHOW" or event == "AUCTION_HOUSE_CLOSED" then
+        OnAuctionHouseEvent(event)
     end
 end)
 
