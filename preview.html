@@ -159,6 +159,7 @@
   }
   .tico.heal { background: linear-gradient(160deg,#7d2b2b,#3d1414); color: #ffd7d7; }
   .tico.cook { background: linear-gradient(160deg,#7a4a1c,#3a2210); color: #ffe0b0; }
+  .tico.alch { background: linear-gradient(160deg,#4a2a63,#251636); color: #e3cdff; }
   .switch { position: absolute; top: 44px; right: 14px; height: 20px; }
 
   /* ---------- 配方列表 ---------- */
@@ -239,6 +240,7 @@
   }
   .blk .ico.heal { background: linear-gradient(160deg, #7d2b2b, #3d1414); box-shadow: inset 0 0 0 1px rgba(255,150,150,.28); }
   .blk .ico.cook { background: linear-gradient(160deg, #7a4a1c, #3a2210); box-shadow: inset 0 0 0 1px rgba(255,190,110,.28); }
+  .blk .ico.alch { background: linear-gradient(160deg, #4a2a63, #251636); box-shadow: inset 0 0 0 1px rgba(205,170,255,.28); }
 
   /* 商品列: 第一行名称, 第二行售价 */
   .blk .prod {
@@ -464,7 +466,7 @@
 </div>
 
 <div class="settings">
-  <h2><span>金币工坊</span> v0.7.2</h2>
+  <h2><span>金币工坊</span> v0.8.0</h2>
   <div class="sub">魔兽世界无限服 · 金币工具箱</div>
   <hr>
   <div class="row on" id="row1"><div class="box"><span class="check">✓</span></div><span class="lbl">登录后自动呼出主界面</span></div>
@@ -503,7 +505,7 @@
   layoutHome();
 
   /* ==================== 数据 ====================
-     预览页为示例数据 (游戏内由 ProfData.lua 提供完整 32/124 条) */
+     预览页为示例数据 (游戏内由 ProfData.lua 提供完整 32/124/181 条) */
   const PROF = {
     "first-aid": {
       name: "急救", icon: "✚", cls: "heal",
@@ -538,6 +540,19 @@
         ["白鳞鲑鱼", 1, 175, [["新鲜的白鳞鲑鱼", 1]]],
         ["夜鳞鱼汤", 1, 225, [["新鲜的夜鳞鲷鱼", 1]]],
         ["水煮阳鳞鲑鱼", 1, 250, [["新鲜的阳鳞鲑鱼", 1]]],
+      ],
+    },
+    "alchemy": {
+      name: "炼金术", icon: "⚗", cls: "alch",
+      rows: [
+        ["初级治疗药水", 1, 1, [["空瓶", 1], ["宁神花", 1]]],
+        ["初级法力药水", 1, 25, [["空瓶", 1], ["魔皇草", 1], ["宁神花", 1]]],
+        ["次级治疗药水", 1, 55, [["空瓶", 1], ["石南草", 1], ["宁神花", 1]]],
+        ["治疗药水", 1, 110, [["铅瓶", 1], ["跌打草", 1], ["石南草", 1]]],
+        ["强力治疗药水", 1, 155, [["铅瓶", 1], ["皇血草", 1], ["石南草", 1]]],
+        ["点金石", 1, 225, [["铁锭", 4], ["黑色硫酸盐", 1], ["秘银杆", 1], ["火焰之心", 1], ["元素之土", 1], ["黑珍珠", 1], ["紫莲花", 4]]],
+        ["强效治疗药水", 1, 275, [["水晶瓶", 1], ["太阳草", 1], ["卡德加的胡须", 1]]],
+        ["泰坦合剂", 1, 300, [["格罗姆之血", 7], ["山鼠草", 3], ["石鳞鱼油", 1], ["黑莲花", 1], ["水晶瓶", 1]]],
       ],
     },
   };
@@ -966,9 +981,13 @@
     showToast("拍卖行已搜索: " + name, 2500);
   });
 
-  /* 截图/演示用: ?m=mats 直接进材料汇总模式 */
-  if (new URLSearchParams(location.search).get("m") === "mats") {
+  /* 截图/演示用: ?m=mats 直接进材料汇总模式; ?p=alchemy 直接落到某个专业 */
+  const qs = new URLSearchParams(location.search);
+  if (qs.get("m") === "mats") {
     curMode = "mats";
+  }
+  if (qs.get("p") && PROF[qs.get("p")]) {
+    curKey = qs.get("p");
   }
 
   renderTabs();

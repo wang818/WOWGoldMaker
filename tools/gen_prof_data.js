@@ -16,7 +16,7 @@ const SRC = 'D:/wow/client/World of Warcraft/_forever_/Interface/AddOns/Dungeons
 const OUT = 'D:/works/wow/WOWGoldMaker/WOWGoldMaker/ProfData.lua';
 
 // 要导出的专业
-const WANTED = ['first-aid', 'cooking'];
+const WANTED = ['first-aid', 'cooking', 'alchemy'];
 
 // 括号平衡读取, 正确处理字符串里的括号
 function readBalanced(s, i) {
@@ -102,9 +102,14 @@ for (const key of WANTED) {
     }
 
     const parsed = [];
+    const pending = [];   // 未实装 (静态库里带 nip = "..." 标记的那几行)
     for (const rowSrc of rows) {
         const body = rowSrc.trim().replace(/^\{/, '').replace(/\}$/, '');
         const f = splitFields(body);
+        if (/^\s*nip\s*=/.test(body)) {           // 客户端里不存在这条配方, 收了也只会有假材料
+            pending.push(body.slice(0, 60));
+            continue;
+        }
         const spell = parseInt(f[0], 10);
         const item = parseInt(f[1], 10);
         if (!spell || !item) continue;           // 跳过非配方行
@@ -119,7 +124,8 @@ for (const key of WANTED) {
     const seen = new Set();
     const uniq = parsed.filter(p => !seen.has(p.spell) && seen.add(p.spell));
     profData[key] = uniq;
-    console.log(`${key.padEnd(12)} ${String(uniq.length).padStart(4)} 条  (原始 ${parsed.length}, 去重 ${parsed.length - uniq.length})`);
+    console.log(`${key.padEnd(12)} ${String(uniq.length).padStart(4)} 条  (原始 ${parsed.length}, 去重 ${parsed.length - uniq.length}, 未实装 ${pending.length})`);
+    for (const p of pending) console.log(`  跳过未实装: ${p}`);
 }
 
 // 生成 Lua

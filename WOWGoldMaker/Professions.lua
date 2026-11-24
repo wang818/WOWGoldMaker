@@ -97,8 +97,16 @@ P.ICON_ID = {
     ["skinning"]  = 134366,   -- 剥皮 (暂无配方数据, 先存档)
 }
 
+-- 少数专业有可靠的贴图名, 没实测到 fileID 时可以直接用名字。
+-- 注意 Trade_FirstAid / Trade_Cooking 这两个名字在客户端里**根本不存在** (急救用的是
+-- Spell_Holy_SealOfSacrifice, 烹饪用 INV_Misc_Food_15), 所以那两个只能靠上面的 fileID。
+-- Trade_Alchemy 是真实存在的经典贴图 (HandyNotes_NPCs 的 forever 分支就在用它), 可以直接写名字。
+P.ICON_TEX = {
+    ["alchemy"] = "Interface\\Icons\\trade_alchemy",
+}
+
 -- iconSpell / iconItem 只用于"这个专业的代表图标", 不参与配方数据。
--- skillLine 是专业页签的 SkillLine ID (急救 129 / 烹饪 185)。
+-- skillLine 是专业页签的 SkillLine ID (急救 129 / 烹饪 185 / 炼金术 171)。
 P.LIST = {
     {
         key         = "first-aid",
@@ -117,6 +125,15 @@ P.LIST = {
         iconSpell   = 2538,      -- 焦狼肉 → 熟食图标 (兜底)
         iconItem    = 6290,
         note        = "食物 · 饮料 · 增益",
+    },
+    {
+        key         = "alchemy",
+        name        = "炼金术",   -- 与客户端 GetProfessionInfo 返回的本地化名一致 (页签图标兜底靠它匹配)
+        skillLine   = 171,
+        iconTexture = P.ICON_TEX["alchemy"],
+        iconSpell   = 2330,      -- 初级治疗药水 → 药水图标 (兜底)
+        iconItem    = 118,       -- 初级治疗药水 (物品)
+        note        = "药水 · 药剂 · 合剂 · 转化",
     },
 }
 
@@ -214,15 +231,29 @@ function P.DebugIcons()
 end
 
 -- 分类中文名 (各专业共用, 未收录的直接显示原 key)
+-- 注意有几个 key 是「同名不同义」的: 急救的 Potions 是治疗药水, 炼金的 Potions 是普通药水
+-- (炼金另有 Elixirs/Flasks 单独成组); Camp 在烹饪是营地, 在炼金是营地物件。
+-- 所以专业私有的名字放 GROUP_BY_PROF, 先查它再查通用表。
 local GROUP_NAME = {
     -- 急救
     Bandages = "绷带", Potions = "治疗药水", Remedies = "药膏与解毒剂", Camping = "营地用品",
     -- 烹饪
     Camp = "营地", Strength = "力量", Agility = "敏捷", Caster = "法系",
     Stamina = "耐力", Spirit = "精神", Plain = "仅生命与法力", ["Other buffs"] = "其他增益",
+    -- 炼金 (通用兜底, 与客户端分类名一致)
+    Elixirs = "药剂", Flasks = "合剂", Transmutes = "转化", Oils = "油与其他",
 }
 
-function P.GroupName(key)
+local GROUP_BY_PROF = {
+    ["alchemy"] = {
+        Potions = "药水",          -- 急救里同名的那组是治疗药水
+        Camp    = "营地物件",      -- 烹饪里同名的那组是营地食物
+    },
+}
+
+function P.GroupName(key, prof)
+    local per = prof and GROUP_BY_PROF[prof]
+    if per and per[key] then return per[key] end
     return GROUP_NAME[key] or tostring(key or "")
 end
 
@@ -361,7 +392,7 @@ function P.Report(key, mode)
             local r = recipes[i]
             if r.group ~= lastGroup then
                 lastGroup = r.group
-                print("  |cffe8c25a" .. P.GroupName(r.group) .. "|r")
+                print("  |cffe8c25a" .. P.GroupName(r.group, key) .. "|r")
             end
             local made = r.made > 1 and format(" ×%d", r.made) or ""
             print(format("   %2d. %s%s |cff9d9d9d[%d]|r  |cff6f7783←|r %s",

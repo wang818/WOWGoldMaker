@@ -178,12 +178,16 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
         ns.OpenRecipes("first-aid", "mats")
     elseif msg == "cooking" or msg == "烹饪" then
         ns.OpenRecipes("cooking")
+    elseif msg == "alchemy" or msg == "炼金" or msg == "炼金术" then
+        ns.OpenRecipes("alchemy")
+    elseif msg == "alchemy mats" or msg == "炼金材料" then
+        ns.OpenRecipes("alchemy", "mats")
     elseif msg == "prof" or msg == "专业" then
         ns.Print("可用专业 (点击主界面专业卡片也能打开):")
         for _, p in ipairs(ns.Prof.LIST) do
             print(format("  |cffe8c25a%-10s|r %s", p.key, p.name))
         end
-        ns.Print("用法: /wgm prof first-aid  |  /wgm prof cooking")
+        ns.Print("用法: /wgm prof first-aid  |  /wgm prof cooking  |  /wgm prof alchemy")
     elseif msg:match("^prof ") or msg:match("^专业 ") then
         local key = msg:match("^prof (.+)$") or msg:match("^专业 (.+)$")
         ns.OpenRecipes(key)
@@ -280,6 +284,7 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
         print("  |cffe8c25a/wgm config|r     打开游戏内设置页")
         print("  |cffe8c25a/wgm fa|r         主界面切到急救列表")
         print("  |cffe8c25a/wgm cooking|r    主界面切到烹饪列表")
+        print("  |cffe8c25a/wgm alchemy|r    主界面切到炼金列表")
         print("  |cffe8c25a/wgm prof|r       列出所有专业")
         print("  |cffe8c25a/wgm icons|r      诊断专业/物品图标能否解析")
         print("  |cffe8c25a/wgm ah|r         拍卖行查价状态 (API / 是否打开 / 缓存)")

@@ -2,7 +2,7 @@
 -- WOWGoldMaker / UI.lua
 -- 单页主界面:
 --   第一行  头像 · 问候 · 金币 · 等级 · 在线时长 · 设置 · 关闭
---   第二行  专业页签 (急救 / 烹饪) + 配方/材料切换
+--   第二行  专业页签 (急救 / 烹饪 / 炼金术) + 配方/材料切换
 --   其余    当前专业的可生产列表 (默认急救), 直接内嵌, 不再开二级窗口
 ---------------------------------------------------------------------------
 
@@ -51,7 +51,9 @@ local MAT_TAG_GAP = 6    -- 卖价 / 买价 之间的间距 (两个 NPC 价算�
 local MAT_PRICE_GAP = 10 -- NPC 价与「本配方金额」之间的间距 (拉开一点, 免得三个数字连成一片)
 local TREE_X      = 7    -- 从属竖虚线的 x (对齐商品图标中心)
 local DASH_MAX    = 26   -- 虚线小段的纹理池上限
-local MAT_CELLS = 4      -- 材料最多 4 项 (烹饪里最多的配方就是 4 项)
+-- 材料行的最大条数。取全专业的上限: 急救最多 3 项, 烹饪 4 项, 炼金的「点金石」要 7 项。
+-- 格子是按行预建的 (用不到的隐藏), 所以这里写大的代价只是每行多几个空框。
+local MAT_CELLS = 7
 local BAR_W    = 3       -- 滚动指示条宽度
 local BTN_W    = 40      -- 行尾查价按钮宽度
 local SCROLL_STEP = 44   -- 滚轮一格滚多远 (约一个配方块)
@@ -861,7 +863,9 @@ local function RelayoutMats(r, w)
 
     for k = 1, MAT_CELLS do
         local c = r.cells[k]
-        if k <= n then
+        if not c then
+            -- 这一格还没被建出来 (按需创建, 见 GetCell): 没建就是从来没用到, 不必隐藏
+        elseif k <= n then
             -- 材料行整行都是这一样材料的命中区 (悬停看它、左键在拍卖行搜它),
             -- 所以控件铺满整行宽度; 右侧几列仍按 cw 的右缘摆 (MAT_RIGHT 那段留白
             -- 是给商品行的按钮列对齐用的), 否则金额会跟着控件一起右移。
@@ -1080,6 +1084,117 @@ AnchorRowRight = function(r, withBtn)
     r.req:SetPoint("RIGHT", r, "TOPRIGHT", right - pw - 6, -PRODUCT_H * 0.5)
 end
 
+-- 建一格材料行 (CreateFrame 那堆控件)。由 GetCell 按需调用 ——
+-- 一个配方最多 7 样材料 (炼金的点金石), 但绝大多数只有 3~4 样,
+-- 一次就把 7 格全建出来的话, 180 多条炼金配方会白建上千个空框, 切页签时卡一下。
+local function MakeCell(r, k)
+    local c = CreateFrame("Frame", nil, r)
+    c:SetSize(200, MAT_LINE_H)
+    -- 每行独立接鼠标: 鼠标停在哪样材料上就只讲那样材料, 不再整行一条大提示
+    c:EnableMouse(true)
+
+    -- 整行可悬停, 悬停时给一点底色, 明确指出「现在讲的是这一样」
+    c.hl = c:CreateTexture(nil, "BACKGROUND")
+    c.hl:SetAllPoints(true)
+    c.hl:SetColorTexture(1, 1, 1, 0)
+    c.hl:Hide()
+
+    -- 从竖虚线伸过来的一小段横线 (画在行左侧的空白里, 所以是负偏移)
+    c.branch = c:CreateTexture(nil, "ARTWORK")
+    c.branch:SetColorTexture(1, 1, 1, 0.16)
+    c.branch:SetSize(MAT_INDENT - TREE_X - 4, 1)
+    c.branch:SetPoint("LEFT", c, "LEFT", TREE_X + 1 - MAT_INDENT, 0)
+
+    c.icon = c:CreateTexture(nil, "ARTWORK")
+    c.icon:SetSize(MAT_ICON, MAT_ICON)
+    c.icon:SetPoint("LEFT", 0, 0)
+    c.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+    c.icon:Hide()
+
+    c.name = T.Text(c, F_MAT, C.muted)
+    c.name:SetPoint("LEFT", c.icon, "RIGHT", 4, 0)
+    c.name:SetWordWrap(false)
+
+    -- 需要几个 (×3)。单独一列而不是拼在名字后面: 名字那列宽度是按可用空间算的,
+    -- 拼在末尾的话长名字会先把数字裁掉 —— 数量比名字重要, 不能丢。
+    c.cnt = T.Text(c, F_MAT, C.faint)
+    c.cnt:SetWordWrap(false)
+    c.cnt:SetJustifyH("RIGHT")
+
+    c.price = T.Text(c, F_MAT, C.faint)
+    c.price:SetPoint("RIGHT", c, "RIGHT", 0, 0)
+    c.price:SetWordWrap(false)
+    c.price:SetJustifyH("RIGHT")
+
+    -- NPC 卖价 (客户端自带, 只读)
+    c.sellTag = T.Text(c, F_MAT, C.muted)
+    c.sellTag:SetWordWrap(false)
+    c.sellTag:SetJustifyH("RIGHT")
+    c.sellTag:Hide()
+
+    -- NPC 买价 (手动录入, 点一下开编辑框)。空着的时候显示「＋买价」当入口
+    c.buyTag = T.Text(c, F_MAT, C.faint)
+    c.buyTag:SetWordWrap(false)
+    c.buyTag:SetJustifyH("RIGHT")
+    c.buyTag:SetText("＋买价")
+
+    -- 文字本身收不到鼠标事件, 盖一个透明小框专门接点击/悬停
+    c.buyHit = CreateFrame("Frame", nil, c)
+    c.buyHit:EnableMouse(true)
+    c.buyHit:SetScript("OnEnter", function(s)
+        c.hoverOn(s)
+        c.buyTag:SetTextColor(T.rgb(C.goldHi))
+    end)
+    c.buyHit:SetScript("OnLeave", function(s)
+        c.buyTag:SetTextColor(T.rgb(ns.NPC and ns.NPC.Buy(c.itemID) and C.teal or C.faint))
+        c.hoverOff(s)
+    end)
+    c.buyHit:SetScript("OnMouseUp", function()
+        ns.UI.EditNpcPrice(c.itemID, PlainText(c.name:GetText()), c)
+    end)
+
+    -- 悬停/离开的公共处理: 直接把锚点控件传进来, 提示归属按控件区分
+    -- (买价小框和材料行是两个控件, 用同一个归属会让提示闪一下就没了)
+    c.hoverOn = function(s)
+        -- 材料行接管鼠标后行本身的 OnEnter 不会触发, 这里补上整块高亮,
+        -- 否则鼠标一进材料区, 行的底色就"熄灭"了
+        r.bg:SetColorTexture(1, 1, 1, 0.05)
+        if not c.itemID then
+            c.hl:Hide()
+            ns.UI.ShowRowTooltip(s, r)      -- 空行不抢提示
+            return
+        end
+        c.hl:SetColorTexture(1, 1, 1, 0.06)
+        c.hl:Show()
+        ns.UI.ShowMatTooltip(s, r, k)
+    end
+    c.hoverOff = function(s)
+        c.hl:Hide()
+        r.bg:SetColorTexture(1, 1, 1, r.odd and 0.025 or 0)
+        TipEnd(s)
+    end
+    c:SetScript("OnEnter", function(s) c.hoverOn(s) end)
+    c:SetScript("OnLeave", function(s) c.hoverOff(s) end)
+    -- 左键点这一行 = 在拍卖行里搜这样材料 (买价那一格有自己的点击, 不冲突)
+    c:SetScript("OnMouseUp", function(_, button)
+        if button ~= "LeftButton" or not c.itemID then return end
+        ns.UI.SearchInAH(c.itemID, c.matName or PlainText(c.name and c.name:GetText()))
+    end)
+
+    c:Hide()
+    return c
+end
+
+-- 取第 k 格, 没有就现场建一个 (k 会进闭包, 供 ShowMatTooltip 定位是第几样材料)
+local function GetCell(r, k)
+    local c = r.cells[k]
+    if not c then
+        c = MakeCell(r, k)
+        r.cells[k] = c
+    end
+    return c
+end
+
 local function GetRow(i)
     local r = rows[i]
     if r then return r end
@@ -1138,105 +1253,10 @@ local function GetRow(i)
     r.npcTag:Hide()
 
     -- 材料行: 一样材料一行, 竖排在商品行下面 (位置/宽度由 RelayoutMats 算)
+    -- 格子按需创建 (见 GetCell): 炼金有 180 多条配方, 一条预建满 7 格会白建上千个空框
     r.cells = {}
     r.cellCount = 0
     r.dashes = {}          -- 从属竖虚线的小段纹理池 (见 LayoutTree)
-    for k = 1, MAT_CELLS do
-        local c = CreateFrame("Frame", nil, r)
-        c:SetSize(200, MAT_LINE_H)
-        -- 每行独立接鼠标: 鼠标停在哪样材料上就只讲那样材料, 不再整行一条大提示
-        c:EnableMouse(true)
-
-        -- 整行可悬停, 悬停时给一点底色, 明确指出「现在讲的是这一样」
-        c.hl = c:CreateTexture(nil, "BACKGROUND")
-        c.hl:SetAllPoints(true)
-        c.hl:SetColorTexture(1, 1, 1, 0)
-        c.hl:Hide()
-
-        -- 从竖虚线伸过来的一小段横线 (画在行左侧的空白里, 所以是负偏移)
-        c.branch = c:CreateTexture(nil, "ARTWORK")
-        c.branch:SetColorTexture(1, 1, 1, 0.16)
-        c.branch:SetSize(MAT_INDENT - TREE_X - 4, 1)
-        c.branch:SetPoint("LEFT", c, "LEFT", TREE_X + 1 - MAT_INDENT, 0)
-
-        c.icon = c:CreateTexture(nil, "ARTWORK")
-        c.icon:SetSize(MAT_ICON, MAT_ICON)
-        c.icon:SetPoint("LEFT", 0, 0)
-        c.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
-        c.icon:Hide()
-
-        c.name = T.Text(c, F_MAT, C.muted)
-        c.name:SetPoint("LEFT", c.icon, "RIGHT", 4, 0)
-        c.name:SetWordWrap(false)
-
-        -- 需要几个 (×3)。单独一列而不是拼在名字后面: 名字那列宽度是按可用空间算的,
-        -- 拼在末尾的话长名字会先把数字裁掉 —— 数量比名字重要, 不能丢。
-        c.cnt = T.Text(c, F_MAT, C.faint)
-        c.cnt:SetWordWrap(false)
-        c.cnt:SetJustifyH("RIGHT")
-
-        c.price = T.Text(c, F_MAT, C.faint)
-        c.price:SetPoint("RIGHT", c, "RIGHT", 0, 0)
-        c.price:SetWordWrap(false)
-        c.price:SetJustifyH("RIGHT")
-
-        -- NPC 卖价 (客户端自带, 只读)
-        c.sellTag = T.Text(c, F_MAT, C.muted)
-        c.sellTag:SetWordWrap(false)
-        c.sellTag:SetJustifyH("RIGHT")
-        c.sellTag:Hide()
-
-        -- NPC 买价 (手动录入, 点一下开编辑框)。空着的时候显示「＋买价」当入口
-        c.buyTag = T.Text(c, F_MAT, C.faint)
-        c.buyTag:SetWordWrap(false)
-        c.buyTag:SetJustifyH("RIGHT")
-        c.buyTag:SetText("＋买价")
-
-        -- 文字本身收不到鼠标事件, 盖一个透明小框专门接点击/悬停
-        c.buyHit = CreateFrame("Frame", nil, c)
-        c.buyHit:EnableMouse(true)
-        c.buyHit:SetScript("OnEnter", function(s)
-            c.hoverOn(s)
-            c.buyTag:SetTextColor(T.rgb(C.goldHi))
-        end)
-        c.buyHit:SetScript("OnLeave", function(s)
-            c.buyTag:SetTextColor(T.rgb(ns.NPC and ns.NPC.Buy(c.itemID) and C.teal or C.faint))
-            c.hoverOff(s)
-        end)
-        c.buyHit:SetScript("OnMouseUp", function()
-            ns.UI.EditNpcPrice(c.itemID, PlainText(c.name:GetText()), c)
-        end)
-
-        -- 悬停/离开的公共处理: 直接把锚点控件传进来, 提示归属按控件区分
-        -- (买价小框和材料行是两个控件, 用同一个归属会让提示闪一下就没了)
-        c.hoverOn = function(s)
-            -- 材料行接管鼠标后行本身的 OnEnter 不会触发, 这里补上整块高亮,
-            -- 否则鼠标一进材料区, 行的底色就"熄灭"了
-            r.bg:SetColorTexture(1, 1, 1, 0.05)
-            if not c.itemID then
-                c.hl:Hide()
-                ns.UI.ShowRowTooltip(s, r)      -- 空行不抢提示
-                return
-            end
-            c.hl:SetColorTexture(1, 1, 1, 0.06)
-            c.hl:Show()
-            ns.UI.ShowMatTooltip(s, r, k)
-        end
-        c.hoverOff = function(s)
-            c.hl:Hide()
-            r.bg:SetColorTexture(1, 1, 1, r.odd and 0.025 or 0)
-            TipEnd(s)
-        end
-        c:SetScript("OnEnter", function(s) c.hoverOn(s) end)
-        c:SetScript("OnLeave", function(s) c.hoverOff(s) end)
-        -- 左键点这一行 = 在拍卖行里搜这样材料 (买价那一格有自己的点击, 不冲突)
-        c:SetScript("OnMouseUp", function(_, button)
-            if button ~= "LeftButton" or not c.itemID then return end
-            ns.UI.SearchInAH(c.itemID, c.matName or PlainText(c.name and c.name:GetText()))
-        end)
-        c:Hide()
-        r.cells[k] = c
-    end
 
     r.req = T.Text(r, F_REQ, C.muted)
     r.req:SetPoint("RIGHT", -6, 0)
@@ -1497,7 +1517,7 @@ RenderList = function()
                 r.blockH = PRODUCT_H + r.cellCount * MAT_LINE_H
                 for k = 1, r.cellCount do
                     local m = mats[k]
-                    local c = r.cells[k]
+                    local c = GetCell(r, k)
                     SetCellIcon(c, m.id)
                     c.matName = m.name      -- 点这一行去拍卖行搜索时用 (普通字符串, 带色码的不行)
                     SetCellNpc(c, m.id)
