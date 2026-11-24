@@ -87,7 +87,7 @@ local tabs = {}            -- key -> 页签按钮
 local profIcons = {}       -- key -> 页签图标纹理
 local rows = {}            -- 列表行池
 
-local scroll, listContent, track, thumb
+local scroll, listContent, track, thumb, sbar
 local noticeFrame, noticeText, noticeToken   -- 页面内浮层提示
 
 local curKey  = "first-aid"   -- 当前专业
@@ -917,16 +917,43 @@ local function RelayoutRows(w)
     end
 end
 
+-- 滚动位置换算: 滚轮 / 拖滑块 / 点轨道三处共用同一套夹取
+local function ScrollMax()
+    local viewH = scroll:GetHeight() or 1
+    local ch = listContent:GetHeight() or 1
+    return math.max(0, ch - viewH)
+end
+
+-- p: 0 = 顶部, 1 = 底部
+local function ScrollTo(p)
+    local m = ScrollMax()
+    if m <= 0 then return end
+    if p < 0 then p = 0 elseif p > 1 then p = 1 end
+    scroll:SetVerticalScroll(m * p)
+    if UpdateThumb then UpdateThumb() end
+end
+
+local function ScrollPixels(px)
+    local m = ScrollMax()
+    local v = (scroll:GetVerticalScroll() or 0) + px
+    if v < 0 then v = 0 elseif v > m then v = m end
+    scroll:SetVerticalScroll(v)
+    if UpdateThumb then UpdateThumb() end
+end
+
 UpdateThumb = function()
     if not (thumb and track and scroll and listContent) then return end
+    local grab = sbar and sbar.grab
     local viewH = scroll:GetHeight() or 1
     local ch = listContent:GetHeight() or 1
     local maxScroll = ch - viewH
     if maxScroll <= 0 then
         thumb:Hide()
+        if grab then grab:Hide() end   -- 没得滚: 抓取层一起收起, 免得占着鼠标
         return
     end
     thumb:Show()
+    if grab then grab:Show() end
     local h = math.max(20, viewH * (viewH / ch))
     thumb:SetHeight(h)
 
@@ -935,6 +962,84 @@ UpdateThumb = function()
 
     thumb:ClearAllPoints()
     thumb:SetPoint("TOPLEFT", track, "TOPLEFT", 0, -((viewH - h) * p))
+end
+
+-- 右侧滚动条。
+-- 要紧的是它得是个能吃鼠标的控件, 不能只是贴在面板上的两张纹理: 纹理收不到鼠标事件,
+-- 按在滚动条上的那一下会穿到底下的主面板 (f 注册了 RegisterForDrag), 于是"拖滚动条"
+-- 变成"拖整个窗口"。这里用 bar(Frame) 接过整条轨道的按下, 再在滑块位置盖一层
+-- 透明 grab 专门接拖拽。
+local function BuildScrollBar(f)
+    local bar = CreateFrame("Frame", nil, f)
+    bar:SetWidth(BAR_W + 12)   -- 装得下抓取层 (比滑块宽, 好按住)
+    bar:SetPoint("TOP", scroll, "TOPRIGHT", 6, 0)
+    bar:SetPoint("BOTTOM", scroll, "BOTTOMRIGHT", 6, 0)
+    -- 行挂在 listContent 下, 层级跟着父级往上叠; 不抬高层级行会压住滚动条抢鼠标
+    bar:SetFrameLevel((f:GetFrameLevel() or 1) + 6)
+    bar:EnableMouse(true)        -- 吃掉按在滚动条上的点击
+    bar:EnableMouseWheel(true)   -- 指针停在滚动条上也照样滚
+
+    track = bar:CreateTexture(nil, "BACKGROUND")
+    track:SetColorTexture(1, 1, 1, 0.05)
+    track:SetWidth(BAR_W)
+    track:SetPoint("TOP", bar, "TOP", 0, 0)
+    track:SetPoint("BOTTOM", bar, "BOTTOM", 0, 0)
+
+    thumb = bar:CreateTexture(nil, "ARTWORK")
+    thumb:SetColorTexture(T.rgb(C.gold, 0.5))
+    thumb:SetWidth(BAR_W)
+    thumb:SetHeight(24)
+    thumb:SetPoint("TOPLEFT", track, "TOPLEFT", 0, 0)
+    thumb:Hide()
+
+    -- 透明抓取层: 只有 Frame 能 RegisterForDrag。
+    -- 宽度比 3px 的滑块放宽一些, 否则"按住滑块"这个动作根本没有命中率
+    local grab = CreateFrame("Frame", nil, bar)
+    grab:SetWidth(BAR_W + 12)
+    grab:SetPoint("TOP", thumb, "TOP", 0, 0)
+    grab:SetPoint("BOTTOM", thumb, "BOTTOM", 0, 0)
+    grab:EnableMouse(true)
+    grab:RegisterForDrag("LeftButton")
+    grab:Hide()
+    bar.grab = grab
+
+    -- 光标 y 换算到 bar 的坐标系 (和 thumb:GetBottom() 同一套刻度)
+    local function CursorY()
+        local _, cy = GetCursorPosition()
+        return (cy or 0) / (bar:GetEffectiveScale() or 1)
+    end
+
+    grab:SetScript("OnDragStart", function(self)
+        -- 记住手抓在滑块的哪个高度, 拖动时滑块才不会跳到光标中心
+        self.offset = CursorY() - (thumb:GetBottom() or 0)
+        self:SetScript("OnUpdate", function(s)
+            local trackH = track:GetHeight() or 1
+            local h = thumb:GetHeight() or 1
+            local span = trackH - h
+            if span <= 1 then return end
+            local bottom = CursorY() - (s.offset or 0)
+            ScrollTo(((track:GetTop() or 0) - h - bottom) / span)
+        end)
+    end)
+    grab:SetScript("OnDragStop", function(self) self:SetScript("OnUpdate", nil) end)
+
+    -- 按在滑块上方/下方: 翻一页 (按在滑块上算拖拽, 已被 grab 接走)
+    bar:SetScript("OnMouseDown", function(_, button)
+        if button ~= "LeftButton" then return end
+        local viewH = scroll:GetHeight() or 1
+        if CursorY() > (thumb:GetTop() or 0) then
+            ScrollPixels(-viewH * 0.9)
+        else
+            ScrollPixels(viewH * 0.9)
+        end
+    end)
+
+    bar:SetScript("OnMouseWheel", function(_, delta)
+        ScrollPixels(-(delta or 0) * SCROLL_STEP)
+    end)
+
+    sbar = bar
+    return bar
 end
 
 local function BuildList(f)
@@ -947,12 +1052,8 @@ local function BuildList(f)
     listContent:SetSize(BASE_W - PAD * 2 - 8, 1)
     scroll:SetScrollChild(listContent)
 
-    scroll:SetScript("OnMouseWheel", function(self, delta)
-        local maxScroll = math.max(0, (listContent:GetHeight() or 0) - (self:GetHeight() or 0))
-        local v = (self:GetVerticalScroll() or 0) - delta * SCROLL_STEP
-        if v < 0 then v = 0 elseif v > maxScroll then v = maxScroll end
-        self:SetVerticalScroll(v)
-        if UpdateThumb then UpdateThumb() end
+    scroll:SetScript("OnMouseWheel", function(_, delta)
+        ScrollPixels(-(delta or 0) * SCROLL_STEP)
     end)
 
     -- 面板尺寸变化时, 行宽跟着变 (ScrollFrame 的锚点已经自动伸缩)
@@ -962,19 +1063,8 @@ local function BuildList(f)
         if UpdateThumb then UpdateThumb() end
     end)
 
-    -- 右侧滚动指示条
-    track = f:CreateTexture(nil, "ARTWORK")
-    track:SetColorTexture(1, 1, 1, 0.05)
-    track:SetWidth(BAR_W)
-    track:SetPoint("TOP", scroll, "TOPRIGHT", 6, 0)
-    track:SetPoint("BOTTOM", scroll, "BOTTOMRIGHT", 6, 0)
-
-    thumb = f:CreateTexture(nil, "ARTWORK")
-    thumb:SetColorTexture(T.rgb(C.gold, 0.5))
-    thumb:SetWidth(BAR_W)
-    thumb:SetHeight(24)
-    thumb:SetPoint("TOPLEFT", track, "TOPLEFT", 0, 0)
-    thumb:Hide()
+    -- 右侧滚动条 (可拖拽, 见 BuildScrollBar)
+    BuildScrollBar(f)
 end
 
 --------------------------------------------------------------------------- 构建: 页面提示
