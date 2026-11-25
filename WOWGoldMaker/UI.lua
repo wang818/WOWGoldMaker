@@ -1176,9 +1176,33 @@ AnchorRowRight = function(r, withBtn)
     r.npcPrice:ClearAllPoints()
     r.npcPrice:SetPoint("TOPRIGHT", r, "TOPRIGHT", right, -14)
 
+    -- 材料汇总的「商人价」格子: 8px 高的字按不准, 盖上整列宽的一条命中区
+    -- (只在材料汇总模式显示, 配方模式这格是 NPC 盈亏, 点它仍走整行搜索)
+    if r.npcHit then
+        r.npcHit:ClearAllPoints()
+        r.npcHit:SetPoint("TOPRIGHT", r, "TOPRIGHT", right + 3, -9)
+        r.npcHit:SetSize(pw + 3, 15)
+    end
+
     -- 技能等级: 落在两行盈亏左边、商品行垂直中线 ("RIGHT" 指向 TOPRIGHT 的点 = 右缘居中)
     r.req:ClearAllPoints()
     r.req:SetPoint("RIGHT", r, "TOPRIGHT", right - pw - 6, -PRODUCT_H * 0.5)
+end
+
+-- 材料汇总行右下那格: 商人卖这东西多少钱 (玩家自己记的单价 × 需要几个)。
+-- 有些材料商人直接卖, 那就不用去拍卖行抢 —— 记了价就写合计 (和上面「共 X」对照着看),
+-- 没记就留「＋买价」当入口 (点一下开录入框, 见 GetRow 里的 npcHit)。
+local function SetRowMatsBuy(r, itemID)
+    if not (r and r.npcPrice) then return end
+    local NPC = ns.NPC
+    local buy = NPC and NPC.Buy(itemID)
+    if not buy then
+        r.npcPrice:SetTextColor(T.rgb(C.faint))
+        r.npcPrice:SetText("＋买价")
+        return
+    end
+    r.npcPrice:SetTextColor(T.rgb(C.teal))
+    r.npcPrice:SetText("商人 " .. NPC.Money(buy * (r.matCount or 1)))
 end
 
 -- 建一格材料行 (CreateFrame 那堆控件)。由 GetCell 按需调用 ——
@@ -1371,6 +1395,27 @@ local function GetRow(i)
     r.npcPrice:SetWordWrap(false)
     r.npcPrice:SetJustifyH("RIGHT")
 
+    -- 材料汇总模式: 这格写「商人 3金60银」, 点它开买价录入框。
+    -- 文字收不到鼠标事件, 盖一条透明的命中区 (位置在 AnchorRowRight 里算)。
+    -- 子控件接管鼠标后行的 OnEnter 不会触发, 悬停高亮和提示都要在这里补。
+    r.npcHit = CreateFrame("Frame", nil, r)
+    r.npcHit:EnableMouse(true)
+    r.npcHit:SetScript("OnEnter", function(s)
+        r.bg:SetColorTexture(1, 1, 1, 0.05)
+        r.npcPrice:SetTextColor(T.rgb(C.goldHi))
+        ns.UI.ShowRowTooltip(s, r)
+    end)
+    r.npcHit:SetScript("OnLeave", function(s)
+        r.bg:SetColorTexture(1, 1, 1, r.odd and 0.025 or 0)
+        if r.matsMode then SetRowMatsBuy(r, r.itemID) end
+        TipEnd(s)
+    end)
+    r.npcHit:SetScript("OnMouseUp", function(_, button)
+        if button ~= "LeftButton" then return end
+        ns.UI.EditNpcPrice(r.itemID, PlainText(r.title and r.title:GetText()), r)
+    end)
+    r.npcHit:Hide()
+
     -- 查价按钮 (每行一个, 点一下查该配方产物 + 全部材料的拍卖行价)
     r.btn = MakeMiniButton(r, BTN_W, 14, "查价")
     r.btn:SetPoint("RIGHT", -2, 0)
@@ -1526,7 +1571,11 @@ local function RefreshNpcFor(itemID)
     for i = 1, #rows do
         local r = rows[i]
         if r:IsShown() then
-            if r.itemID == itemID then SetRowNpc(r, itemID) end
+            if r.itemID == itemID then
+                SetRowNpc(r, itemID)
+                -- 材料汇总那一行右下角写的就是这东西的商人价, 改完价要一起刷
+                if r.matsMode then SetRowMatsBuy(r, itemID) end
+            end
             for k = 1, (r.cellCount or 0) do
                 local c = r.cells[k]
                 if c.itemID == itemID then SetCellNpc(c, itemID) end
@@ -1581,8 +1630,13 @@ RenderList = function()
                 SetRowNpc(r, m.id)
 
                 -- 材料汇总: 单价写在材料名下方, 右侧是该材料的合计花费。
-                -- 这行本身就是一样材料, 没有「成品卖给谁」的问题, 所以 NPC 盈亏那行留空。
-                r.npcPrice:SetText("")
+                -- 这行本身就是一样材料, 没有「成品卖给谁」的问题, 所以第二行写
+                -- 「商人 X」(NPC 买价, 自己记的单价 × 个数) —— 有的材料商人直接卖,
+                -- 拿它和上面拍卖行的合计一比, 就知道该不该去拍卖行。
+                r.matsMode = true
+                r.matCount = m.count or 1
+                SetRowMatsBuy(r, m.id)
+                r.npcHit:Show()
                 local e = ns.Auction and ns.Auction.Price(m.id)
                 if e and e.unit then
                     r.prodPrice:SetTextColor(T.rgb(C.gold))
@@ -1600,6 +1654,9 @@ RenderList = function()
                 local made = (rec.made and rec.made > 1)
                     and format(" |cff9d9d9d×%d|r", rec.made) or ""
                 r.rec = rec
+                r.matsMode = false
+                r.matCount = nil
+                r.npcHit:Hide()     -- 配方模式这格是 NPC 盈亏, 不给点
                 AnchorRowRight(r, true)
                 r.btn.busy = false
                 r.btn.text:SetText("查价")
@@ -2029,16 +2086,37 @@ function ns.UI.ShowRowTooltip(anchor, r)
         if e and e.unit then
             GameTooltip:AddLine("当前最低单价 " .. AH.Money(e.unit) .. "/个", 1, 0.82, 0.35)
         else
-            GameTooltip:AddLine("还没有价格, 点右边「查价」", 0.62, 0.65, 0.70)
+            -- 材料汇总这一页没有「查价」按钮 (价格是配方页查来的), 别让提示指向不存在的按钮
+            GameTooltip:AddLine("还没有价格 · 切回「配方列表」点查价", 0.62, 0.65, 0.70)
         end
         if ns.NPC then
             local npcSell = ns.NPC.Sell(r.itemID)
             local npcBuy  = ns.NPC.Buy(r.itemID)
+            local cnt = r.matCount or 1
             if npcSell then
-                GameTooltip:AddLine("卖商人 " .. ns.NPC.Money(npcSell) .. "/个", 0.82, 0.84, 0.88)
+                GameTooltip:AddLine(format("卖商人 %s/个 · %d 个共 %s",
+                    ns.NPC.Money(npcSell), cnt, ns.NPC.Money(npcSell * cnt)), 0.82, 0.84, 0.88)
             end
+            -- 买价是玩家自己记的: 汇总模式下顺手把「一共要多少」也算出来, 才能和上面
+            -- 拍卖行的合计直接比
             if npcBuy then
-                GameTooltip:AddLine("从商人买 " .. ns.NPC.Money(npcBuy) .. "/个", 0.29, 0.78, 0.66)
+                GameTooltip:AddLine(format("从商人买 %s/个 · %d 个共 %s",
+                    ns.NPC.MoneyEx(npcBuy), cnt, ns.NPC.MoneyEx(npcBuy * cnt)), 0.29, 0.78, 0.66)
+                if e and e.unit then
+                    -- 差多少写到铜位: 简写会把「2银64铜」显示成「2银」, 看着像没差多少
+                    local ahTotal, npcTotal = e.unit * cnt, npcBuy * cnt
+                    if npcTotal < ahTotal then
+                        GameTooltip:AddLine("买商人省 " .. ns.NPC.MoneyEx(ahTotal - npcTotal),
+                            0.45, 0.85, 0.60)
+                    elseif ahTotal < npcTotal then
+                        GameTooltip:AddLine("拍卖行省 " .. ns.NPC.MoneyEx(npcTotal - ahTotal),
+                            1, 0.82, 0.35)
+                    else
+                        GameTooltip:AddLine("两边一个价", 0.62, 0.65, 0.70)
+                    end
+                end
+            else
+                GameTooltip:AddLine("从商人买: 点右边「＋买价」自己记一个单价", 0.42, 0.46, 0.52)
             end
         end
         GameTooltip:Show()

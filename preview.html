@@ -334,6 +334,9 @@
   .blk .price.good, .blk .npcprice.good { color: var(--green); font-weight: 600; }
   .blk .price.bad, .blk .npcprice.bad  { color: var(--red); font-weight: 600; }
   .blk .price.gold, .blk .npcprice.gold { color: var(--gold); }
+  .blk .npcprice.teal { color: var(--teal); }       /* 材料汇总的「商人 X」*/
+  .blk .npcprice.entry { color: var(--faint); }     /* 没记价时的「＋买价」入口 */
+  .blk .npcprice.entry:hover { color: var(--gold-hi); cursor: pointer; }
   .blk .price.wait, .blk .npcprice.wait { color: var(--gold); }
   .blk .qbtn {
     flex: 0 0 40px; height: 14px; border-radius: 4px;
@@ -407,7 +410,7 @@
 </head>
 <body>
 
-<h1><b>WOWGOLDMAKER</b> · 单页预览 (v0.8.5)</h1>
+<h1><b>WOWGOLDMAKER</b> · 单页预览 (v0.8.6)</h1>
 
 <div class="window">
   <div class="shadow"></div>
@@ -475,7 +478,7 @@
 </div>
 
 <div class="settings">
-  <h2><span>金币工坊</span> v0.8.5</h2>
+  <h2><span>金币工坊</span> v0.8.6</h2>
   <div class="sub">魔兽世界无限服 · 金币工具箱</div>
   <hr>
   <div class="row" id="row1"><div class="box"><span class="check">✓</span></div><span class="lbl">登录后自动呼出主界面</span></div>
@@ -755,6 +758,12 @@
     if (curMode === "mats") {
       summarize(p.rows).forEach(([n, c], i) => {
         const unit = (i * 733) % 8000 + 200;
+        /* 在材料汇总里记一下「商人卖多少」: 有价写合计, 没价留「＋买价」当入口
+           (对应游戏里点这一格开录入框, ns.UI.EditNpcPrice) */
+        const buy = npcBuyOf(n);
+        const buyCell = buy
+          ? `<div class="npcprice teal">商人 ${money(buy * c)}</div>`
+          : `<div class="npcprice entry mbuycell" data-name="${n}" data-cnt="${c}">＋买价</div>`;
         html += `<div class="blk${i % 2 ? " odd" : ""}">
           <div class="pline" data-name="${n}">
             <div class="ico ${cls}"></div>
@@ -763,7 +772,7 @@
               <div class="psell">单价 ${money(unit)}/个</div>
             </div>
             <div class="req gold">×${c}</div>
-            <div class="prices"><div class="price gold">共 ${moneyEx(unit * c)}</div><div class="npcprice"></div></div>
+            <div class="prices"><div class="price gold">共 ${moneyEx(unit * c)}</div>${buyCell}</div>
             <div class="qbtn" style="visibility:hidden">查价</div>
           </div>
         </div>`;
@@ -803,13 +812,27 @@
 
     // 行悬停数据 (对应 ns.UI.ShowRowTooltip): 完整标题 + 材料清单
     const tipRows = curMode === "mats"
-      ? summarize(p.rows).map(([n, c]) => ({
-          title: n,
-          sub: "材料汇总",
-          mats: [],
-          npc: "卖商人 " + money(npcSellOf(n)) + "/个",
-          hint: "共需 ×" + c,
-        }))
+      ? summarize(p.rows).map(([n, c], i) => {
+          const unit = (i * 733) % 8000 + 200;      // 与渲染时的假单价保持一致
+          const sell = npcSellOf(n), buy = npcBuyOf(n);
+          const lines = [];
+          if (buy) {
+            lines.push(`从商人买 ${moneyEx(buy)}/个 · ${c} 个共 ${moneyEx(buy * c)}`);
+            if (buy * c < unit * c) lines.push(`买商人省 ${moneyEx(unit * c - buy * c)}`);
+            else if (unit * c < buy * c) lines.push(`拍卖行省 ${moneyEx(buy * c - unit * c)}`);
+            else lines.push("两边一个价");
+          } else {
+            lines.push("从商人买: 点「＋买价」自己记一个单价");
+          }
+          return {
+            title: n,
+            sub: `材料汇总 · 单价 ${money(unit)}/个`,
+            mats: [],
+            npc: `卖商人 ${money(sell)}/个 · 共 ${money(sell * c)}`,
+            lines,
+            hint: "共需 ×" + c,
+          };
+        })
       : p.rows.map(([n, made, req, mats]) => {
           const md = made > 1 ? ` ×${made}` : "";
           let sub = "材料配方 · 技能 " + req;
@@ -940,7 +963,17 @@
     }
     const sell = npcSellOf(name), buy = npcBuyOf(name);
     lines.push(`卖商人 ${money(sell)}/个 · ${cnt} 个共 ${money(sell * cnt)}`);
-    lines.push(buy ? `从商人买 ${money(buy)}/个 (自己记的价)` : "从商人买: 点「买价」格子自己记一个");
+    if (buy) {
+      lines.push(`从商人买 ${moneyEx(buy)}/个 · ${cnt} 个共 ${moneyEx(buy * cnt)} (自己记的价)`);
+      if (unit > 0) {
+        /* 差多少精确到铜 —— 简写会把 2银64铜 写成 2银, 看着像没差多少 */
+        if (buy * cnt < unit * cnt) lines.push(`买商人省 ${moneyEx(unit * cnt - buy * cnt)}`);
+        else if (unit * cnt < buy * cnt) lines.push(`拍卖行省 ${moneyEx(buy * cnt - unit * cnt)}`);
+        else lines.push("两边一个价");
+      }
+    } else {
+      lines.push("从商人买: 点「＋买价」自己记一个单价");
+    }
     return { title: name, sub: "材料", lines };
   }
 
@@ -1030,6 +1063,24 @@
     setEditorMoney(...splitMoney(raw));
     $npcEditor.classList.add("on");
   });
+
+  /* 材料汇总里点「商人 X」/「＋买价」那一格 → 也是开买价录入框
+     (游戏里这一格是 npcHit, 点开 ns.UI.EditNpcPrice, 单价 × 个数 = 合计) */
+  $list.addEventListener("click", e => {
+    const cell = e.target.closest && e.target.closest(".mbuycell, .npcprice.teal");
+    if (!cell) return;
+    e.stopPropagation();
+    const pl = cell.closest(".pline");
+    if (!pl) return;
+    const name = pl.dataset.name || "";
+    const cnt = +(pl.querySelector(".req")?.textContent.replace(/\D/g, "") || 1) || 1;
+    const buy = npcBuyOf(name);
+    $npcEditor.querySelector(".ne-who").textContent = name;
+    /* 游戏里记的是单价, 这里取已有单价; 没记过就按一个银给个示例值 */
+    setEditorMoney(...splitMoney(buy ? money(buy) : "1银"));
+    $npcEditor.dataset.cnt = String(cnt);
+    $npcEditor.classList.add("on");
+  });
   $npcEditor.querySelectorAll(".ne-btns button").forEach(b => {
     b.onclick = () => $npcEditor.classList.remove("on");
   });
@@ -1083,10 +1134,11 @@
     $npcEditor.classList.add("on");
   }
 
-  /* 截图/演示用: ?tip=1 直接把第一块的行提示摆出来 (?extra=1 一起用可看完整版) */
-  if (new URLSearchParams(location.search).get("tip") === "1") {
+  /* 截图/演示用: ?tip=N 直接把第 N 块的行提示摆出来 (?extra=1 一起用可看完整版) */
+  const tipN = +(new URLSearchParams(location.search).get("tip") || 0);
+  if (tipN > 0) {
     setTimeout(() => {
-      const blk = document.querySelector(".blk");
+      const blk = document.querySelectorAll(".blk")[tipN - 1];
       if (!blk) return;
       const t = blk._tip;
       if (!t) return;
