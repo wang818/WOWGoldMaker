@@ -45,8 +45,8 @@ local DEFAULTS = {
     -- 自动购买 (真花钱, 默认全关)
     autoBuyOn  = false,                                   -- 总开关: 拍卖行开着时按间隔扫一轮
     autoBuy    = {},                                      -- itemID -> { p = 单价上限(铜) }
-    autoBuyCap = 2 * 10000,                               -- 单轮总花费上限 (铜), 默认 2 金
     autoBuyGap = 60,                                      -- 扫描间隔 (秒), 最小 1, 上限不设
+    -- 注: 旧存档里的 autoBuyCap 字段已不再使用, 留着无害 (MergeDefaults 不会删多余键)
 }
 
 local db
@@ -389,7 +389,7 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
         elseif sub:match("^加") or sub:match("^add") then
             local id, g = sub:match("(%d+)%s+(%d+)")
             if not (id and g) then
-                ns.Print("用法: /wgm 自动 加 <物品ID> <金>  (只填单价上限, 买多少由单轮上限决定)")
+                ns.Print("用法: /wgm 自动 加 <物品ID> <金>  (只填单价上限, 有挂单就买, 每轮最多 200 个)")
             else
                 AB.Set(tonumber(id), tonumber(g) * 10000)
                 ns.Print(format("已加入自动购买: #%s ≤ %s 金%s",

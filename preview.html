@@ -619,7 +619,7 @@
 </head>
 <body>
 
-<h1><b>WOWGOLDMAKER</b> · 单页预览 (v0.12.2)</h1>
+<h1><b>WOWGOLDMAKER</b> · 单页预览 (v0.12.3)</h1>
 
 <div class="window">
   <div class="shadow"></div>
@@ -684,14 +684,11 @@
           <button id="acToggle">开启</button>
           <button id="acScan">立即扫一轮</button>
         </div>
-        <div class="ap-row"><span class="ap-lbl">单轮最多花</span>
-          <span class="ap-cell"><input id="acCap" maxlength="8" inputmode="numeric"><i>金</i></span>
-        </div>
         <div class="ap-row"><span class="ap-lbl">扫描间隔</span>
           <span class="ap-cell"><input id="acGap" maxlength="5" inputmode="numeric"><i>秒</i></span>
         </div>
         <div class="ap-hint" id="acHint1"></div>
-        <div class="ap-hint ap-sub">最小 1 秒, 不设上限 · 填太小会一直查价 · 买多少看单轮上限</div>
+        <div class="ap-hint ap-sub">最小 1 秒 · 每件每轮 200 个 · 无总额上限 · 背包满会停</div>
         <div class="ap-btns"><button id="acClose" class="primary">关闭窗口</button></div>
       </div>
     </div>
@@ -743,7 +740,7 @@
 </div>
 
 <div class="settings">
-  <h2><span>金币工坊</span> v0.12.2</h2>
+  <h2><span>金币工坊</span> v0.12.3</h2>
   <div class="sub">魔兽世界无限服 · 金币工具箱</div>
   <hr>
   <div class="row" id="row1"><div class="box"><span class="check">✓</span></div><span class="lbl">登录后自动呼出主界面</span></div>
@@ -908,7 +905,7 @@
         hint.style.color = "var(--red)";
         return;
       }
-      hint.textContent = "≤ " + moneyEx(t) + "/个 · 有挂单就买 · 单轮上限 2金";
+      hint.textContent = "≤ " + moneyEx(t) + "/个 · 有挂单就买 · 每轮 200 个";
       hint.style.color = "var(--gold)";
     }
 
@@ -1014,20 +1011,18 @@
 
     const state = document.getElementById("acState");
     const toggle = document.getElementById("acToggle");
-    const capBox = document.getElementById("acCap");
     const gapBox = document.getElementById("acGap");
     const hint1 = document.getElementById("acHint1");
 
-    /* 演示用的存档值, 和 db.autoBuyOn / autoBuyCap / autoBuyGap 对应 */
-    const CFG = { on: false, cap: 2, gap: 60 };
+    /* 演示用的存档值, 和 db.autoBuyOn / autoBuyGap 对应 (autoBuyCap 已删) */
+    const CFG = { on: false, gap: 60 };
     const ITEMS = 2;
 
     function paint() {
       toggle.textContent = CFG.on ? "关闭" : "开启";
       toggle.classList.toggle("primary", CFG.on);
-      state.textContent = (CFG.on ? "开着" : "关着") + " · " + ITEMS + " 件 · 单轮上限 "
-        + CFG.cap + "金 · 每 " + CFG.gap + " 秒";
-      capBox.value = CFG.cap;
+      state.textContent = (CFG.on ? "开着" : "关着") + " · " + ITEMS + " 件 · 每 "
+        + CFG.gap + " 秒 · 有货就买";
       gapBox.value = CFG.gap;
       hint1.textContent =
         "打开拍卖行后每 " + CFG.gap + " 秒扫一轮 · 有挂单且单价不高于设定值就买";
@@ -1050,13 +1045,6 @@
       gapBox.value = CFG.gap;          // 归一化后回填, 填 0 也能看见实际是 1
       paint();
       showToast("扫描间隔改成 " + CFG.gap + " 秒");
-    });
-    capBox.addEventListener("keydown", (e) => {
-      if (e.key !== "Enter") return;
-      e.preventDefault();
-      CFG.cap = Math.max(0, Math.floor(Number(capBox.value) || 0));
-      paint();
-      showToast("单轮花费上限改成 " + CFG.cap + "金");
     });
     document.getElementById("acScan").onclick = () => showToast("演示: 游戏里会立刻扫一轮");
     document.getElementById("acClose").onclick = () => pop.classList.remove("on");

@@ -3,13 +3,13 @@
 -- 自动购买: 给一样材料设「单价上限」, 拍卖行开着时按设定的间隔扫一轮 (默认 60 秒,
 -- 可改成 1 秒 ~ 任意长), 只要最低单价不高于上限就买 —— 不设目标数量, 有货就吃。
 --
--- **这是真花钱的功能**, 所以设了两道闸, 任何一道都能单独拦住:
+-- **这是真花钱的功能**, 所以留了这几道闸:
 --   1) 总开关 db.autoBuyOn —— 默认关闭, 必须手动开, 关窗口/重登都保持关闭状态
---   2) 单轮总花费上限 db.autoBuyCap —— 一轮里所有自动购买加起来不超过这个数
--- 买多少由「这一轮还剩多少额度」决定, 没有「买够几个就停」的概念 ——
--- 想要控制量就把上限调小, 或者把它从列表里移掉。
+--   2) 每件的单价上限 —— 高于它这一轮就跳过, 这是唯一的价格闸门
+-- 没有「单轮总花费上限」了: 设了单价就要买到, 不想花钱就关总开关或把物品移出列表。
 --
--- 另外每次真下单前还会再核一次: 拍卖行窗口必须开着、金币必须够、单价必须不高于上限。
+-- 每次真下单前还会再核一次: 拍卖行窗口必须开着、金币必须够、单价必须不高于上限、
+-- 背包得有地方放。
 --
 -- 查价复用 Auction.lua 的查询队列 (把「单个物品」当成一个没有材料的配方喂给
 -- AH.CheckRecipe), 这样自动购买和界面查价共用同一条队列和同一套节流 ——
@@ -23,9 +23,9 @@ ns.AutoBuy = M
 
 local format = string.format
 
--- 单笔最多下单这么多个。没有目标数量之后, 数量 = 「本轮剩余额度 ÷ 单价」——
--- 碰上 1 铜的货就会算出上万个, 客户端吃不下 (背包也装不下)。200 约十组,
--- 想要更多就多等几轮 (间隔可以调到 1 秒, 补货很快)。
+-- 每件每轮最多下单这么多个。没有目标数量、也没有单轮上限之后, 这个数是唯一的
+-- 数量闸门: 碰上 1 铜的货, 不封顶就会算出上万个 (客户端吃不下, 背包也装不下)。
+-- 200 约十组, 想要更多就多等几轮 (间隔能调到 1 秒, 补货很快)。
 local MAX_ORDER     = 200
 local BUY_TIMEOUT   = 10     -- 单笔购买最多等多久 (秒)
 local CONFIRM_DELAY = 0.8    -- Start 之后隔多久补 Confirm
@@ -48,7 +48,7 @@ local bought     = {}        -- 本次会话已下单但客户端还没算进背
 local buyLog     = {}
 
 -- 本轮买到一半时被 pending 打断, 记下「接着从哪继续」
-local resumeList, resumeIdx, resumeCap
+local resumeList, resumeIdx
 
 local NowT, RoundStep, RoundDone, StartPurchase, FinishPurchase
 
@@ -77,17 +77,6 @@ function M.SetEnabled(on)
     DB().autoBuyOn = on and true or false
     if on then M.Start() else M.Stop() end
     return DB().autoBuyOn
-end
-
-function M.Cap()
-    local v = tonumber(DB().autoBuyCap)
-    if not v or v <= 0 then return 2 * 10000 end
-    return math.floor(v)
-end
-
-function M.SetCap(copper)
-    DB().autoBuyCap = math.max(0, math.floor(tonumber(copper) or 0))
-    return DB().autoBuyCap
 end
 
 -- 扫描间隔 (秒)。最小 1 秒, 上限不设 —— 有人想 5 秒盯一次, 也有人想 10 分钟看一次,
@@ -217,7 +206,51 @@ local function Money()
     return 0
 end
 
+-- 这件东西在客户端物品库里的堆叠数。拿不到就按 20 (最保守的堆叠) 估。
+-- 只用来算「背包还能塞多少个」, 估小了最多多买几轮, 估大了会撞上背包满。
+local function StackSize(id)
+    if type(GetItemInfo) ~= "function" then return 20 end
+    local r = { pcall(GetItemInfo, id) }
+    local stack = r[9]                       -- name, link, quality, ilvl, req, class, sub, maxStack, ...
+    if type(stack) == "number" and stack > 0 then return stack end
+    return 20
+end
+
+-- 背包空格数。旧客户端没这个接口就返回 nil —— 表示「这一层不限制」, 不要当成 0。
+local function FreeSlots()
+    if type(GetNumFreeBagSlots) ~= "function" then return nil end
+    local ok, n = pcall(GetNumFreeBagSlots)
+    if ok and type(n) == "number" then return n end
+    return nil
+end
+
+-- 这一笔下多少个 = 单笔上限 / 背包放得下 / 钱买得起, 三者取小。
+-- 没有「单轮总上限」了, 所以不看「这一轮还剩多少额度」, 每件都是各自独立买满。
+-- 第二个返回值说明为什么是 0 (bag = 背包满, money = 钱不够), 上层据此提示。
+local function BuyQty(id, unit)
+    local room = MAX_ORDER
+
+    local free = FreeSlots()
+    if free then
+        room = free * StackSize(id)
+        if room > MAX_ORDER then room = MAX_ORDER end
+        if room < 1 then return 0, "bag" end
+    end
+
+    local afford = 0
+    if unit and unit > 0 then afford = math.floor(Money() / unit) end
+    if afford < 1 then return 0, "money" end
+    if afford < room then room = afford end
+    return room
+end
+
 M.Have = Have
+M.BuyQty = BuyQty
+
+-- 单笔上限, 给界面用 (提示里写「每件每轮 N 个」), 别在 UI 里再硬编码一个数
+function M.Order()
+    return MAX_ORDER
+end
 
 --------------------------------------------------------------------------- 通知 / 日志
 
@@ -227,6 +260,18 @@ local function Notice(msg)
     if t - lastNotice < 1.2 then return end
     lastNotice = t
     if ns.Print then ns.Print(msg) end
+end
+
+-- 背包满了: 不买是「没办法买」, 不提示玩家会以为是坏了。但每秒一轮的话
+-- 每轮都报一条就是刷屏, 30 秒最多一次。单独一条时间线, 不占 Notice 的节流额度。
+local lastBagNotice = -100
+local function BagNotice()
+    local t = NowT()
+    if t - lastBagNotice < 30 then return end
+    lastBagNotice = t
+    if ns.Print then
+        ns.Print("|cffff9955背包没有空格|r 自动购买先停下 —— 清出格子后会自动继续")
+    end
 end
 
 function M.Log()
@@ -279,8 +324,8 @@ FinishPurchase = function(ok, reason)
 
     -- 买成了就把本轮接着跑完 (列表里有好几样时, 不然一轮只能买一样);
     -- 没买成 / 超时就算了, 等下一轮, 免得在同一个物品上连着撞
-    local rl, ri, rc = resumeList, resumeIdx, resumeCap
-    resumeList, resumeIdx, resumeCap = nil, nil, nil
+    local rl, ri = resumeList, resumeIdx
+    resumeList, resumeIdx = nil, nil
 
     if ok and rl then
         scanning = true
@@ -289,7 +334,7 @@ FinishPurchase = function(ok, reason)
         -- 缓一下再查下一件: 让客户端先把手里的购买结果处理干净, 免得两条查询撞在一起
         C_Timer.After(0.6, function()
             if tok ~= roundToken then return end
-            RoundStep(rl, ri, rc)
+            RoundStep(rl, ri)
         end)
     else
         if RoundDone then RoundDone() end
@@ -371,20 +416,19 @@ M.RoundDone = RoundDone
 
 -- 逐条处理。用递归而不是 for 循环, 因为每条的查价都是异步的 ——
 -- 必须等上一件的结果回来再决定下一件, 否则一轮里会并发几十条查询, 把节流额度一次吃光。
-RoundStep = function(list, i, capLeft)
+RoundStep = function(list, i)
     local tok = roundToken
 
-    local function again(nextLeft)
+    local function again()
         if tok ~= roundToken then return end        -- 期间被 Stop / 重来过
-        RoundStep(list, i + 1, nextLeft)
+        RoundStep(list, i + 1)
     end
 
     if i > #list then RoundDone(); return end
-    if capLeft <= 0 then RoundDone(); return end
     if pending then RoundDone(); return end         -- 上一笔还没结束, 下一轮再说
 
     local e = list[i]
-    if not e.p or e.p <= 0 then again(capLeft); return end
+    if not e.p or e.p <= 0 then again(); return end
 
     local AH = ns.Auction
     if not (AH and AH.CheckRecipe) then RoundDone(); return end
@@ -395,27 +439,24 @@ RoundStep = function(list, i, capLeft)
         local pe = out and out.unit and out.unit[e.id]
         local unit = pe and pe.unit
 
-        if not unit or unit <= 0 then again(capLeft); return end
-        if unit > e.p then again(capLeft); return end          -- 高于上限: 不买
+        if not unit or unit <= 0 then again(); return end
+        if unit > e.p then again(); return end                  -- 高于上限: 不买
 
-        -- 没有目标数量了: 这一轮「还剩多少额度」就买多少, 但要按剩下的件数均分 ——
-        -- 否则列表里第一件便宜货会把整轮额度一口吃掉, 后面的永远轮不到。
-        -- 均额连一个都买不起时, 至少让它买一个 (仍在总上限内), 不然贵的货会被饿死。
-        -- 单笔再兜一个 MAX_ORDER, 免得 1 铜的货一次算出上万个。
-        if capLeft < unit then again(0); return end             -- 剩下的额度连一个都不够
-        local share = math.floor(capLeft / (#list - i + 1))
-        if share < unit then share = unit end
-        local qty = math.floor(share / unit)
-        if qty > MAX_ORDER then qty = MAX_ORDER end
-        if qty < 1 then again(0); return end
+        -- 没有单轮总额度了: 每件各自按「单笔上限 / 背包放得下 / 钱够」算一笔。
+        -- 买完这一笔, 下一轮再买 —— 间隔可以调到 1 秒, 补货不用等一分钟。
+        local qty, why = BuyQty(e.id, unit)
+        if qty < 1 then
+            if why == "bag" then BagNotice() end
+            again(); return
+        end
 
         local name = NameText(e.id)
         local ok = StartPurchase(e.id, qty, unit, name)
-        if not ok then again(capLeft); return end
+        if not ok then again(); return end
 
         -- 下单成功: 交给 FinishPurchase 收尾, 它在购买事件回来后会从这里接着往下跑。
         -- 这里不能直接 again() —— pending 期间本轮必须停下, 否则会并发下一单。
-        resumeList, resumeIdx, resumeCap = list, i + 1, capLeft - qty * unit
+        resumeList, resumeIdx = list, i + 1
     end, nil, true)
 end
 
@@ -434,7 +475,7 @@ function M.Scan()
     scanning = true
     roundToken = roundToken + 1
     lastScan = NowT()
-    RoundStep(list, 1, M.Cap())
+    RoundStep(list, 1)
     return true
 end
 
@@ -502,9 +543,7 @@ end)
 --------------------------------------------------------------------------- 摘要
 
 function M.Summary()
-    local AH = ns.Auction
-    local cap = (AH and AH.MoneyEx) and AH.MoneyEx(M.Cap()) or tostring(M.Cap())
-    return format("%s · %d 件 · 单轮上限 %s · 每 %d 秒",
+    return format("%s · %d 件 · 每 %d 秒 · 有货就买",
         M.Enabled() and "|cff4dc87a开着|r" or "|cffeb6b6b关着|r",
-        M.Count(), cap, M.Gap())
+        M.Count(), M.Gap())
 end

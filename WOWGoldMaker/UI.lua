@@ -2766,7 +2766,7 @@ local function BuildAutoEditor()
     end
 
     -- 提示分两行: 上面一行说「这个价会怎么买」(会变颜色), 下面一行是固定信息。
-    -- 挤成一行的话, 「≤ 1金20银0铜/个 · 有挂单就买 · 单轮上限 2金 · 背包已有 12 个」
+    -- 挤成一行的话, 「≤ 1金20银0铜/个 · 有挂单就买 · 每轮 200 个 · 背包已有 12 个」
     -- 在 312 像素里放不下, 会被裁掉尾巴
     local hint = T.Text(f, 8, C.faint)
     hint:SetPoint("TOPLEFT", cells[1], "BOTTOMLEFT", 0, -8)
@@ -2806,10 +2806,11 @@ local function BuildAutoEditor()
             return
         end
         hint:SetTextColor(T.rgb(C.gold))
-        -- 说清楚「买多少」: 没有目标数量, 数量由单轮上限决定, 这句不写玩家会以为只买一个
-        local cap = (ns.AutoBuy and ns.AutoBuy.Cap and ns.AutoBuy.Cap()) or 0
-        hint:SetText(format("≤ %s/个 · 有挂单就买 · 单轮上限 %s",
-            ns.NPC.MoneyEx(total), ns.NPC.MoneyEx(cap)))
+        -- 说清楚「买多少」: 没有目标数量也没有总上限, 有挂单就买, 每件每轮最多 200 个,
+        -- 买完还有货就等下一轮 (间隔可调), 不写这句玩家会以为只买一个
+        local order = (ns.AutoBuy and ns.AutoBuy.Order and ns.AutoBuy.Order()) or 200
+        hint:SetText(format("≤ %s/个 · 有挂单就买 · 每轮 %d 个",
+            ns.NPC.MoneyEx(total), order))
     end
 
     -- 银/铜超过 99 折上去, 免得三格数字加起来和总数对不上
@@ -2958,15 +2959,15 @@ end
 
 --------------------------------------------------------------------------- 自动购买总开关
 
--- 开关 + 上限 + 间隔都在这里改, 避免玩家只能去改存档文件
+-- 开关 + 扫描间隔在这里改 (单价上限在材料行的「自动」按钮里), 免得玩家改存档文件
 local autoCfg
 
 local function BuildAutoCfg()
     if autoCfg then return autoCfg end
     if not frame then return nil end
 
-    -- 比上一版高: 多了一行「扫描间隔」, 提示也从一行变两行
-    local f = T.Glass(frame, 320, 196, "panel")
+    -- 去掉「单轮最多花」那一行之后矮了一截; 提示仍然是两行
+    local f = T.Glass(frame, 320, 168, "panel")
     f:SetFrameStrata(ns.DB().strata or "DIALOG")
     f:SetFrameLevel((frame:GetFrameLevel() or 200) + 20)
     f:SetClampedToScreen(true)
@@ -2999,37 +3000,11 @@ local function BuildAutoCfg()
         if not ok and why then ns.UI.Notify("没扫: " .. why, 3) end
     end)
 
-    local capLabel = T.Text(f, 9, C.faint)
-    capLabel:SetPoint("TOPLEFT", toggle, "BOTTOMLEFT", 0, -10)
-    capLabel:SetWidth(72)
-    capLabel:SetText("单轮最多花")
-
-    local capBox = CreateFrame("EditBox", nil, f)
-    capBox:SetSize(56, 16)
-    capBox:SetPoint("LEFT", capLabel, "RIGHT", 6, 0)
-    capBox:SetFont(T.FontFile(), 11, "")
-    capBox:SetTextColor(T.rgb(C.text))
-    capBox:SetAutoFocus(false)
-    capBox:SetNumeric(true)
-    capBox:SetMaxLetters(8)
-    capBox:SetTextInsets(1, 1, 0, 0)
-    capBox:SetScript("OnEnterPressed", function(b)
-        local v = tonumber(b:GetText() or "") or 0
-        ns.AutoBuy.SetCap(v * 10000)          -- 这一格填的是「金」
-        b:ClearFocus()
-        if autoCfg and autoCfg.paint then autoCfg.paint() end
-        ns.UI.Notify("单轮花费上限改成 " .. ns.NPC.MoneyEx(ns.AutoBuy.Cap()), 3)
-    end)
-    capBox:SetScript("OnEscapePressed", function(b) b:ClearFocus() end)
-
-    local capUnit = T.Text(f, 9, C.faint)
-    capUnit:SetPoint("LEFT", capBox, "RIGHT", 4, 0)
-    capUnit:SetText("金")
-
     -- 扫描间隔: 以前写死 60 秒, 现在玩家自己填。最小 1 秒 (再小就等于连打查询,
     -- 只会把节流额度吃光), 上限不设 —— 想几分钟看一眼也随他。
+    -- 「单轮最多花」那一行已经去掉了: 现在没有总花费上限, 只有每件的单价上限。
     local gapLabel = T.Text(f, 9, C.faint)
-    gapLabel:SetPoint("TOPLEFT", capLabel, "BOTTOMLEFT", 0, -12)
+    gapLabel:SetPoint("TOPLEFT", toggle, "BOTTOMLEFT", 0, -10)
     gapLabel:SetWidth(72)
     gapLabel:SetText("扫描间隔")
 
@@ -3067,7 +3042,9 @@ local function BuildAutoCfg()
     hint2:SetPoint("TOPLEFT", hint, "BOTTOMLEFT", 0, -4)
     hint2:SetWidth(292)
     hint2:SetWordWrap(false)
-    hint2:SetText("最小 1 秒, 不设上限 · 填太小会一直查价 · 买多少看单轮上限")
+    -- 单笔上限的数值从 AutoBuy 取, 免得两处各写一个 200 后来改漏
+    hint2:SetText(format("最小 1 秒 · 每件每轮 %d 个 · 无总额上限 · 背包满会停",
+        (ns.AutoBuy and ns.AutoBuy.Order and ns.AutoBuy.Order()) or 200))
 
     local close = MakeMiniButton(f, 54, 18, "关闭窗口")
     close:SetPoint("BOTTOMRIGHT", -14, 12)
@@ -3079,7 +3056,6 @@ local function BuildAutoCfg()
         toggle.text:SetTextColor(T.rgb(on and C.gold or C.muted))
         state:SetText(ns.AutoBuy.Summary())
         state:SetTextColor(T.rgb(on and C.text or C.muted))
-        capBox:SetText(tostring(math.floor(ns.AutoBuy.Cap() / 10000)))
         local gap = ns.AutoBuy.Gap()
         gapBox:SetText(tostring(gap))
         hint:SetText(format("打开拍卖行后每 %d 秒扫一轮 · 有挂单且单价不高于设定值就买", gap))
