@@ -111,12 +111,23 @@ function ns.BuildSettings()
         end
     end)
 
+    local auto = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    auto:SetSize(140, 24)
+    auto:SetPoint("LEFT", fav, "RIGHT", 10, 0)
+    auto:SetText("自动购买设置")
+    auto:SetScript("OnClick", function()
+        if SettingsPanel and HideUIPanel then
+            pcall(HideUIPanel, SettingsPanel)
+        end
+        if ns.UI and ns.UI.AutoBuyConfig then ns.UI.AutoBuyConfig() end
+    end)
+
     -- 命令说明
     local help = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
     help:SetPoint("TOPLEFT", 20, -264)
     help:SetJustifyH("LEFT")
     help:SetTextColor(T.rgb(C.muted))
-    help:SetText("|cffe8c25a/wgm|r        开关主界面\n|cffe8c25a/wgm reset|r  重置位置\n|cffe8c25a/wgm 商人|r   打开商人货架\n|cffe8c25a/wgm 收藏|r   打开我的收藏\n|cffe8c25a/wgm config|r 打开本设置页")
+    help:SetText("|cffe8c25a/wgm|r        开关主界面\n|cffe8c25a/wgm reset|r  重置位置\n|cffe8c25a/wgm 商人|r   打开商人货架\n|cffe8c25a/wgm 收藏|r   打开我的收藏\n|cffe8c25a/wgm 自动|r   自动购买设置 (真花钱, 默认关)\n|cffe8c25a/wgm config|r 打开本设置页")
 
     local ok, cat = pcall(Settings.RegisterCanvasLayoutCategory, panel, "金币工坊")
     if ok and cat then

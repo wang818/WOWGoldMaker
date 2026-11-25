@@ -1298,6 +1298,28 @@ local function MakeCell(r, k)
         ns.UI.EditNpcPrice(c.itemID, PlainText(c.name:GetText()), c)
     end)
 
+    -- 自动购买入口: 落在行右缘那段留白里 (MAT_RIGHT 是给商品行按钮列对齐留的),
+    -- 和上一行商品行的「查价」按钮同一竖列, 视觉上是一列操作, 不会显得乱
+    c.autoBtn = MakeMiniButton(c, 26, 12, "自动")
+    c.autoBtn:SetPoint("RIGHT", c, "RIGHT", -4, 0)
+    c.autoBtn:SetScript("OnClick", function()
+        if not c.itemID then return end
+        ns.UI.EditAutoBuy(c.itemID, PlainText(c.name:GetText()), c)
+    end)
+    -- 覆盖 MakeMiniButton 的默认配色: 这一个是有开关状态的, 不能鼠标一走就变回灰色。
+    -- 已加入列表 = 金色底 + 金字, 没加入 = 平常的灰。
+    c.autoBtn:SetScript("OnEnter", function(s)
+        c.autoBtn.bg:SetVertexColor(1, 1, 1, 0.17)
+        c.autoBtn.text:SetTextColor(T.rgb(C.text))
+        c.hoverOn(s)
+    end)
+    c.autoBtn:SetScript("OnLeave", function(s)
+        local on = ns.AutoBuy and ns.AutoBuy.Get(c.itemID)
+        c.autoBtn.bg:SetVertexColor(1, 0.82, 0.35, on and 0.22 or 0.10)
+        c.autoBtn.text:SetTextColor(T.rgb(on and C.gold or C.muted))
+        c.hoverOff(s)
+    end)
+
     -- 悬停/离开的公共处理: 直接把锚点控件传进来, 提示归属按控件区分
     -- (买价小框和材料行是两个控件, 用同一个归属会让提示闪一下就没了)
     c.hoverOn = function(s)
@@ -1549,6 +1571,13 @@ local function SetCellNpc(c, itemID)
     else
         c.buyTag:SetText("＋买价")
         c.buyTag:SetTextColor(T.rgb(C.faint))
+    end
+
+    -- 自动购买状态: 加了就是金底金字, 让玩家一眼看出这行已经被盯着了
+    if c.autoBtn then
+        local cfg = ns.AutoBuy and ns.AutoBuy.Get(itemID)
+        c.autoBtn.bg:SetVertexColor(1, 0.82, 0.35, cfg and 0.22 or 0.10)
+        c.autoBtn.text:SetTextColor(T.rgb(cfg and C.gold or C.muted))
     end
 end
 
@@ -2665,7 +2694,383 @@ function ns.UI.EditNpcPrice(itemID, name, cell)
     if box.HighlightText then box:HighlightText() end
 end
 
---------------------------------------------------------------------------- 专业图标补全
+--------------------------------------------------------------------------- 自动购买: 单价上限录入
+
+-- 和上面「NPC 买价」同一个套路 (金/银/铜三格 + 回车保存), 只多一个「目标数量」。
+-- 价格是**上限**: 拍卖行最低单价不高于它才会买, 高了就这一轮跳过。
+-- 三个金额格全空 = 把这件从自动购买列表里去掉。
+local autoEditor
+
+local function BuildAutoEditor()
+    if autoEditor then return autoEditor end
+    if not frame then return nil end
+
+    local f = T.Glass(frame, 300, 172, "panel")
+    f:SetFrameStrata(ns.DB().strata or "DIALOG")
+    f:SetFrameLevel((frame:GetFrameLevel() or 200) + 20)
+    f:SetClampedToScreen(true)
+    f:EnableMouse(true)
+    f:SetMovable(true)
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", function(s) s:StartMoving() end)
+    f:SetScript("OnDragStop", function(s) s:StopMovingOrSizing() end)
+
+    local title = T.Text(f, 11, C.gold)
+    title:SetPoint("TOPLEFT", 14, -12)
+    title:SetText("自动购买")
+
+    local who = T.Text(f, 9, C.muted)
+    who:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -5)
+    who:SetWidth(272)
+    who:SetWordWrap(false)
+
+    local plabel = T.Text(f, 9, C.faint)
+    plabel:SetPoint("TOPLEFT", who, "BOTTOMLEFT", 0, -10)
+    plabel:SetWidth(56)
+    plabel:SetText("单价不超过")
+
+    local UNIT_C = {
+        (T.COIN and T.COIN.gold) or C.gold,
+        (T.COIN and T.COIN.silver) or C.muted,
+        (T.COIN and T.COIN.copper) or C.faint,
+    }
+    local UNITS = { "金", "银", "铜" }
+    local boxes, cells = {}, {}
+    for i = 1, 3 do
+        local cell = T.Line(f, 64, 20, C.white, 0.06)
+        cell:SetPoint("TOPLEFT", plabel, "TOPLEFT", 62 + (i - 1) * 68, 2)
+        cells[i] = cell
+
+        local eb = CreateFrame("EditBox", nil, f)
+        eb:SetSize(54, 16)
+        eb:SetPoint("LEFT", cell, "LEFT", 5, 0)
+        eb:SetFont(T.FontFile(), 11, "")
+        eb:SetTextColor(T.rgb(C.text))
+        eb:SetAutoFocus(false)
+        eb:SetNumeric(true)
+        eb:SetMaxLetters(6)
+        eb:SetTextInsets(1, 1, 0, 0)
+
+        local u = T.Text(f, 9, UNIT_C[i])
+        u:SetPoint("LEFT", cell, "RIGHT", 3, 0)
+        u:SetText(UNITS[i])
+
+        boxes[i] = eb
+    end
+
+    local qlabel = T.Text(f, 9, C.faint)
+    qlabel:SetPoint("TOPLEFT", cells[1], "BOTTOMLEFT", 0, -10)
+    qlabel:SetWidth(56)
+    qlabel:SetText("目标数量")
+
+    local qcell = T.Line(f, 64, 20, C.white, 0.06)
+    qcell:SetPoint("TOPLEFT", qlabel, "TOPLEFT", 62, 2)
+
+    local qbox = CreateFrame("EditBox", nil, f)
+    qbox:SetSize(54, 16)
+    qbox:SetPoint("LEFT", qcell, "LEFT", 5, 0)
+    qbox:SetFont(T.FontFile(), 11, "")
+    qbox:SetTextColor(T.rgb(C.text))
+    qbox:SetAutoFocus(false)
+    qbox:SetNumeric(true)
+    qbox:SetMaxLetters(3)
+    qbox:SetTextInsets(1, 1, 0, 0)
+
+    local qunit = T.Text(f, 9, C.faint)
+    qunit:SetPoint("LEFT", qcell, "RIGHT", 3, 0)
+    qunit:SetText("个")
+
+    local hint = T.Text(f, 8, C.faint)
+    hint:SetPoint("TOPLEFT", qcell, "BOTTOMLEFT", 0, -8)
+    hint:SetWidth(272)
+    hint:SetWordWrap(false)
+
+    local HINT = "背包已有 %d 个 · 低于或等于这个单价才买 · 金额全空 = 移出列表"
+
+    local function Total()
+        local g = tonumber(boxes[1]:GetText() or "") or 0
+        local s = tonumber(boxes[2]:GetText() or "") or 0
+        local k = tonumber(boxes[3]:GetText() or "") or 0
+        return math.floor(g) * 10000 + math.floor(s) * 100 + math.floor(k)
+    end
+
+    local function IsEmpty()
+        for i = 1, 3 do
+            local t = boxes[i]:GetText()
+            if t and t:gsub("%s", "") ~= "" then return false end
+        end
+        return true
+    end
+
+    local function Qty()
+        local q = math.floor(tonumber(qbox:GetText() or "") or 0)
+        if q < 1 then q = 3 end
+        return q
+    end
+
+    local function RefreshHint()
+        if IsEmpty() then
+            hint:SetTextColor(T.rgb(C.faint))
+            hint:SetText(format(HINT, f.have or 0))
+            return
+        end
+        local total = Total()
+        if total <= 0 then
+            hint:SetTextColor(T.rgb(C.red))
+            hint:SetText("单价要大于 0")
+            return
+        end
+        hint:SetTextColor(T.rgb(C.gold))
+        hint:SetText(format("≤ %s/个 × 目标 %d 个 · 背包已有 %d 个",
+            ns.NPC.MoneyEx(total), Qty(), f.have or 0))
+    end
+
+    -- 银/铜超过 99 折上去, 免得三格数字加起来和总数对不上
+    local function Normalize()
+        if IsEmpty() then return end
+        local total = Total()
+        if total <= 0 then return end
+        local g, s, k = ns.NPC.SplitMoney(total)
+        boxes[1]:SetText(tostring(g))
+        boxes[2]:SetText(tostring(s))
+        boxes[3]:SetText(tostring(k))
+        RefreshHint()
+    end
+
+    -- 保存后让材料行立刻变色 (不用整页重画)
+    local function RefreshCell(id)
+        for i = 1, #rows do
+            local r = rows[i]
+            for k = 1, (r.cellCount or 0) do
+                local c = r.cells[k]
+                if c and c.itemID == id then SetCellNpc(c, id) end
+            end
+        end
+    end
+
+    local function Save()
+        local id = f.itemID
+        if not id then f:Hide(); return end
+
+        if IsEmpty() then
+            ns.AutoBuy.Remove(id)
+            f:Hide()
+            RefreshCell(id)
+            ns.UI.Notify("已从自动购买列表移除: " .. (f.label or ("#" .. id)), 3)
+            return
+        end
+
+        local total = Total()
+        if total <= 0 then
+            hint:SetTextColor(T.rgb(C.red))
+            hint:SetText("单价要大于 0")
+            boxes[1]:SetFocus()
+            return
+        end
+
+        local q = Qty()
+        ns.AutoBuy.Set(id, total, q)
+        f:Hide()
+        RefreshCell(id)
+        -- 明确告诉玩家「加进去了, 但要不要真买取决于总开关」—— 免得以为设置完就会自动买
+        ns.UI.Notify(format("已加入自动购买: %s · ≤ %s · 目标 %d 个%s",
+            f.label or ("#" .. id), ns.NPC.MoneyEx(total), q,
+            ns.AutoBuy.Enabled() and "" or " (总开关还关着)"), 4)
+    end
+
+    local allBoxes = { boxes[1], boxes[2], boxes[3], qbox }
+    for i = 1, #allBoxes do
+        local idx = i
+        local eb = allBoxes[idx]
+        eb:SetScript("OnTextChanged", RefreshHint)
+        if idx <= 3 then eb:SetScript("OnEditFocusLost", Normalize) end
+        eb:SetScript("OnEscapePressed", function(b) b:ClearFocus(); f:Hide() end)
+        eb:SetScript("OnTabPressed", function()
+            local nxt = allBoxes[idx % #allBoxes + 1]
+            nxt:SetFocus()
+            if nxt.HighlightText then nxt:HighlightText() end
+        end)
+        eb:SetScript("OnEnterPressed", function()
+            if idx < #allBoxes then
+                local nxt = allBoxes[idx + 1]
+                nxt:SetFocus()
+                if nxt.HighlightText then nxt:HighlightText() end
+            else
+                Save()
+            end
+        end)
+    end
+
+    local save = MakeMiniButton(f, 54, 18, "保存")
+    save:SetPoint("BOTTOMRIGHT", -14, 12)
+    save:SetScript("OnClick", Save)
+
+    local del = MakeMiniButton(f, 54, 18, "移除")
+    del:SetPoint("RIGHT", save, "LEFT", -6, 0)
+    del:SetScript("OnClick", function()
+        if f.itemID then
+            ns.AutoBuy.Remove(f.itemID)
+            RefreshCell(f.itemID)
+        end
+        f:Hide()
+    end)
+
+    local cancel = MakeMiniButton(f, 54, 18, "取消")
+    cancel:SetPoint("RIGHT", del, "LEFT", -6, 0)
+    cancel:SetScript("OnClick", function() f:Hide() end)
+
+    f.boxes, f.qbox, f.who, f.hint = boxes, qbox, who, hint
+    f.save, f.del, f.cancel = save, del, cancel
+    f.refreshHint, f.saveNow = RefreshHint, Save
+    f:Hide()
+    autoEditor = f
+    return autoEditor
+end
+
+function ns.UI.EditAutoBuy(itemID, name, cell)
+    if type(itemID) ~= "number" or itemID <= 0 then
+        ns.UI.Notify("这一行还没有解析到物品, 稍等一下再点", 3)
+        return
+    end
+    if not (ns.AutoBuy and ns.AutoBuy.Set) then
+        ns.UI.Notify("自动购买模块未加载", 3)
+        return
+    end
+
+    local e = BuildAutoEditor()
+    if not e then return end
+
+    e.itemID = itemID
+    e.label = name or ("物品 #" .. tostring(itemID))
+
+    local have = (ns.AutoBuy.Have and ns.AutoBuy.Have(itemID)) or 0
+    e.have = have
+
+    local cur = ns.AutoBuy.Get(itemID)
+    -- 有记录就把三格填满 (一眼看清现在设的是多少); 没有就留空
+    local has = cur and (cur.p or 0) > 0
+    local g, s, k = 0, 0, 0
+    if has then g, s, k = ns.NPC.SplitMoney(cur.p) end
+    e.boxes[1]:SetText(has and tostring(g) or "")
+    e.boxes[2]:SetText(has and tostring(s) or "")
+    e.boxes[3]:SetText(has and tostring(k) or "")
+    e.qbox:SetText(tostring((cur and cur.q) or 3))
+
+    e.who:SetText(e.label .. (cur and "  |cff4dc87a· 已在自动购买列表|r"
+                                   or "  |cff8a929e· 还没设置|r"))
+    if e.refreshHint then e.refreshHint() end
+
+    e:ClearAllPoints()
+    e:SetPoint("CENTER", frame, "CENTER", 0, 0)
+    e:Show()
+    local box = e.boxes[3]
+    box:SetFocus()
+    if box.HighlightText then box:HighlightText() end
+end
+
+--------------------------------------------------------------------------- 自动购买总开关
+
+-- 开关 + 上限都在这里改, 避免玩家只能去改存档文件
+local autoCfg
+
+local function BuildAutoCfg()
+    if autoCfg then return autoCfg end
+    if not frame then return nil end
+
+    local f = T.Glass(frame, 300, 150, "panel")
+    f:SetFrameStrata(ns.DB().strata or "DIALOG")
+    f:SetFrameLevel((frame:GetFrameLevel() or 200) + 20)
+    f:SetClampedToScreen(true)
+    f:EnableMouse(true)
+    f:SetMovable(true)
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", function(s) s:StartMoving() end)
+    f:SetScript("OnDragStop", function(s) s:StopMovingOrSizing() end)
+
+    local title = T.Text(f, 11, C.gold)
+    title:SetPoint("TOPLEFT", 14, -12)
+    title:SetText("自动购买 · 设置")
+
+    local state = T.Text(f, 9, C.muted)
+    state:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -6)
+    state:SetWidth(272)
+    state:SetWordWrap(false)
+
+    local toggle = MakeMiniButton(f, 76, 20, "开启")
+    toggle:SetPoint("TOPLEFT", state, "BOTTOMLEFT", 0, -8)
+    toggle:SetScript("OnClick", function()
+        ns.AutoBuy.SetEnabled(not ns.AutoBuy.Enabled())
+        if autoCfg and autoCfg.paint then autoCfg.paint() end
+    end)
+
+    local scan = MakeMiniButton(f, 76, 20, "立即扫一轮")
+    scan:SetPoint("LEFT", toggle, "RIGHT", 6, 0)
+    scan:SetScript("OnClick", function()
+        local ok, why = ns.AutoBuy.Scan()
+        if not ok and why then ns.UI.Notify("没扫: " .. why, 3) end
+    end)
+
+    local capLabel = T.Text(f, 9, C.faint)
+    capLabel:SetPoint("TOPLEFT", toggle, "BOTTOMLEFT", 0, -10)
+    capLabel:SetWidth(72)
+    capLabel:SetText("单轮最多花")
+
+    local capBox = CreateFrame("EditBox", nil, f)
+    capBox:SetSize(56, 16)
+    capBox:SetPoint("LEFT", capLabel, "RIGHT", 6, 0)
+    capBox:SetFont(T.FontFile(), 11, "")
+    capBox:SetTextColor(T.rgb(C.text))
+    capBox:SetAutoFocus(false)
+    capBox:SetNumeric(true)
+    capBox:SetMaxLetters(8)
+    capBox:SetTextInsets(1, 1, 0, 0)
+    capBox:SetScript("OnEnterPressed", function(b)
+        local v = tonumber(b:GetText() or "") or 0
+        ns.AutoBuy.SetCap(v * 10000)          -- 这一格填的是「金」
+        b:ClearFocus()
+        if autoCfg and autoCfg.paint then autoCfg.paint() end
+        ns.UI.Notify("单轮花费上限改成 " .. ns.NPC.MoneyEx(ns.AutoBuy.Cap()), 3)
+    end)
+    capBox:SetScript("OnEscapePressed", function(b) b:ClearFocus() end)
+
+    local capUnit = T.Text(f, 9, C.faint)
+    capUnit:SetPoint("LEFT", capBox, "RIGHT", 4, 0)
+    capUnit:SetText("金")
+
+    local hint = T.Text(f, 8, C.faint)
+    hint:SetPoint("TOPLEFT", capLabel, "BOTTOMLEFT", 0, -10)
+    hint:SetWidth(272)
+    hint:SetWordWrap(false)
+    hint:SetText("打开拍卖行后每分钟扫一轮 · 单价不高于设定值才买 · 买够目标数量就停")
+
+    local close = MakeMiniButton(f, 54, 18, "关闭窗口")
+    close:SetPoint("BOTTOMRIGHT", -14, 12)
+    close:SetScript("OnClick", function() f:Hide() end)
+
+    f.paint = function()
+        local on = ns.AutoBuy.Enabled()
+        toggle.text:SetText(on and "关闭" or "开启")
+        toggle.text:SetTextColor(T.rgb(on and C.gold or C.muted))
+        state:SetText(ns.AutoBuy.Summary())
+        state:SetTextColor(T.rgb(on and C.text or C.muted))
+        capBox:SetText(tostring(math.floor(ns.AutoBuy.Cap() / 10000)))
+    end
+
+    f:Hide()
+    autoCfg = f
+    return autoCfg
+end
+
+function ns.UI.AutoBuyConfig()
+    local f = BuildAutoCfg()
+    if not f then return end
+    f.paint()
+    f:ClearAllPoints()
+    f:SetPoint("CENTER", frame, "CENTER", 0, 0)
+    f:Show()
+end
+
+
 
 local QUESTION = "Interface\\Icons\\INV_Misc_QuestionMark"
 

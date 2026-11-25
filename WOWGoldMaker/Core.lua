@@ -41,6 +41,12 @@ local DEFAULTS = {
     vendorSeen = {},                                      -- 商人货架上实测到的价: itemID -> 铜
     favItems   = {},                                      -- 我的收藏: itemID -> 收藏时间 (os.time)
     tipExtra   = false,                                   -- 悬停是否附带配方/单价/盈亏 (默认只显示物品原来的介绍)
+
+    -- 自动购买 (真花钱, 默认全关)
+    autoBuyOn  = false,                                   -- 总开关: 拍卖行开着时每分钟扫一轮
+    autoBuy    = {},                                      -- itemID -> { p = 单价上限(铜), q = 目标数量 }
+    autoBuyCap = 2 * 10000,                               -- 单轮总花费上限 (铜), 默认 2 金
+    autoBuyGap = 60,                                      -- 扫描间隔 (秒)
 }
 
 local db
@@ -341,6 +347,57 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
             end
         elseif ns.MerchantUI and ns.MerchantUI.Search then
             ns.MerchantUI.Search(kw)
+        end
+    elseif msg:match("^自动") or msg:match("^auto") then
+        -- 自动购买: 无参数开设置窗, 带子命令直接操作
+        local AB = ns.AutoBuy
+        local sub = (msg:match("^自动%s*(.*)$") or msg:match("^auto%s*(.*)$") or ""):gsub("%s+$", "")
+        if not AB then
+            ns.Print("|cffff5555自动购买模块未加载|r (检查 AutoBuy.lua 是否在 .toc 里)")
+        elseif sub == "" then
+            if ns.UI and ns.UI.AutoBuyConfig then ns.UI.AutoBuyConfig() end
+        elseif sub == "开" or sub == "on" then
+            AB.SetEnabled(true)
+            ns.Print("自动购买已开启 —— " .. AB.Summary())
+            ns.Print("|cff8a929e打开拍卖行才会开始扫, 每分钟一轮|r")
+        elseif sub == "关" or sub == "off" then
+            AB.SetEnabled(false)
+            ns.Print("自动购买已关闭")
+        elseif sub == "扫" or sub == "scan" then
+            local ok, why = AB.Scan()
+            if ok then
+                ns.Print("开始扫一轮, 成交会在这里报")
+            else
+                ns.Print("没扫: " .. tostring(why))
+            end
+        elseif sub == "列" or sub == "list" then
+            local list = AB.List()
+            if #list == 0 then
+                ns.Print("自动购买列表是空的 —— 在材料行的「自动」按钮里加")
+            else
+                ns.Print(format("自动购买 %d 件 (%s):", #list, AB.Enabled() and "已开启" or "已关闭"))
+                local AH = ns.Auction
+                for _, e in ipairs(list) do
+                    local p = (AH and AH.MoneyEx) and AH.MoneyEx(e.p) or tostring(e.p)
+                    ns.Print(format("  #%d  ≤ %s/个  ×%d  (背包已有 %d)", e.id, p, e.q, AB.Have(e.id)))
+                end
+            end
+        elseif sub == "清空" or sub == "clear" then
+            local list = AB.List()
+            for _, e in ipairs(list) do AB.Remove(e.id) end
+            ns.Print(format("自动购买列表已清空 (%d 件)", #list))
+        elseif sub:match("^加") or sub:match("^add") then
+            local id, g, q = sub:match("(%d+)%s+(%d+)%s*(%d*)")
+            if not (id and g) then
+                ns.Print("用法: /wgm 自动 加 <物品ID> <金> [数量]")
+            else
+                local qty = tonumber(q) or 3
+                AB.Set(tonumber(id), tonumber(g) * 10000, qty)
+                ns.Print(format("已加入自动购买: #%s ≤ %s 金 ×%d%s",
+                    id, g, qty, AB.Enabled() and "" or " (总开关还关着)"))
+            end
+        else
+            ns.Print("用法: /wgm 自动 [开|关|扫|列|清空|加 <ID> <金> [数量]]")
         end
     elseif msg:match("^search") or msg:match("^搜索") then
         -- 手动试一下「在拍卖行里搜索某件物品」, 不用去列表里点
