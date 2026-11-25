@@ -805,6 +805,9 @@ local function NewNpcRow()
     return r
 end
 
+-- 取行一定要 Show(): 上一轮渲染结束时把没用到的行全 Hide() 了, 池子是循环使用的。
+-- 少了这一句, 只要中途筛出过 0 条 (中文输入法打拼音就会), 之后所有行都保持隐藏 ——
+-- 标题写着「筛出 7 种货」, 列表却一片空白。
 local function GetItemRow()
     itemUsed = itemUsed + 1
     local r = itemPool[itemUsed]
@@ -812,6 +815,7 @@ local function GetItemRow()
         r = NewItemRow()
         itemPool[itemUsed] = r
     end
+    r:Show()
     return r
 end
 
@@ -822,6 +826,7 @@ local function GetNpcRow()
         r = NewNpcRow()
         npcPool[npcUsed] = r
     end
+    r:Show()
     return r
 end
 
