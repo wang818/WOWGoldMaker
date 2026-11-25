@@ -22,3 +22,6 @@ node_modules/
 
 # 截图等工具产物
 tools/*.png
+
+# 中英物品名源库 (900KB, 只在重生成 itemnames_zh.txt 时手动下载)
+tools/data/rdbitems.lua

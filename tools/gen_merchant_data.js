@@ -11,10 +11,14 @@
  *   itemData.lua    t[itemID] = { name, icon, buyPrice }  货名 / 图标 / 买价
  *   data.lua        nodes[mapID][坐标] = { name, npcID }  商人叫什么 / 在哪
  *
+ * 第四段中文名的来源: tools/data/itemnames_zh.txt (由 tools/extract_item_names.js
+ * 从 RDbItems 中英物品名库抽出, 980/985 件有)。快照只有英文名, 没有这一列的话
+ * 中文客户端搜「亚麻布」一条都搜不到。
+ *
  * 输出三张表 (字符串打包, 比嵌套表省一半体积, 打开页面时才解析):
  *   ns.Merchants     [npcID]  = "名字|地图ID|x.x,y.y|阵营"
  *   ns.MerchantStock [npcID]  = "itemID,itemID,..."
- *   ns.MerchantGoods [itemID] = "名字|买价|图标"
+ *   ns.MerchantGoods [itemID] = "名字|买价|图标|中文名"
  *
  * 用法: node tools/gen_merchant_data.js
  */
@@ -24,6 +28,16 @@ const HN = 'D:/wow/client/World of Warcraft/_forever_/Interface/AddOns/HandyNote
 const OUT = 'D:/works/wow/WOWGoldMaker/WOWGoldMaker/MerchantData.lua';
 
 const norm = (s) => s.replace(/\r/g, '');
+
+// 物品ID -> 中文名 (可能缺件, 缺了就只显示英文)
+const ZH_FILE = 'D:/works/wow/WOWGoldMaker/tools/data/itemnames_zh.txt';
+const ZH = new Map();
+if (fs.existsSync(ZH_FILE)) {
+  for (const line of norm(fs.readFileSync(ZH_FILE, 'utf8')).split('\n')) {
+    const [id, cn] = line.split('\t');
+    if (id && cn) ZH.set(+id, cn.trim());
+  }
+}
 
 // 地图ID -> [中文名, 英文名] (经典旧世 1-60 的全部区域, 商人在这些地图上)
 const ZONES = {
@@ -157,7 +171,7 @@ P('-- 这里只在第一次打开「商人货架」时解析一次 (见 Merchant
 P('--');
 P('--   ns.Merchants     [npcID]  = "名字|地图ID|x.x,y.y|阵营"');
 P('--   ns.MerchantStock [npcID]  = "itemID,itemID,..."');
-P('--   ns.MerchantGoods [itemID] = "名字|买价(铜)|图标"');
+P('--   ns.MerchantGoods [itemID] = "名字|买价(铜)|图标|中文名"');
 P('--');
 P('-- 名字都是英文源串: 进了游戏会先用 GetItemInfo / C_CreatureInfo 换成本地化名字,');
 P('-- 取不到才回退到这里 (这些物品不一定在客户端缓存里, 有兜底才不会显示成 #1234)。');
@@ -191,11 +205,13 @@ for (const [id, pair] of Object.entries(ZONES).sort((a, b) => +a[0] - +b[0])) {
 }
 P('}');
 P('');
-P('-- 货物: itemID -> 名字|买价(铜)|图标');
+P('-- 货物: itemID -> 名字|买价(铜)|图标|中文名');
 P('ns.MerchantGoods = {');
 for (const id of itemIds) {
   const g = goods.get(id) || { name: '', price: 0, icon: '' };
-  P('    [' + id + '] = "' + g.name.replace(/"/g, '\\"') + '|' + g.price + '|' + g.icon + '",');
+  const zh = ZH.get(id) || '';
+  P('    [' + id + '] = "' + g.name.replace(/"/g, '\\"') + '|' + g.price + '|' + g.icon
+    + '|' + zh.replace(/"/g, '\\"') + '",');
 }
 P('}');
 P('');
@@ -207,4 +223,5 @@ console.log('wrote', OUT, kb + ' KB');
 console.log('商人', npcIds.length, '/ 有位置', [...where.keys()].filter((k) => stock.has(k)).length,
   '/ 货物', itemIds.length, '/ 关系', pairs);
 console.log('缺位置的商人:', npcIds.filter((id) => !where.has(id)).length,
-  '/ 缺名字的货:', noName);
+  '/ 缺名字的货:', noName,
+  '/ 有中文名:', itemIds.filter((id) => ZH.has(id)).length + '/' + itemIds.length);

@@ -42,8 +42,9 @@ for (const [npcID, s] of Object.entries(STOCK)) {
 }
 
 const rows = [...byItem.entries()].map(([id, npcs]) => {
-  const [name, price, icon] = (GOODS[id] || '||').split('|');
-  return { id, name, price: +price || 0, icon, npcs };
+  // 第 4 段是中文名 (RDbItems 抽出来的), 预览里显示和搜索都用它
+  const [name, price, icon, zh] = (GOODS[id] || '|||').split('|');
+  return { id, name, price: +price || 0, icon, zh: zh || '', npcs };
 });
 
 // 本插件配方要用的材料 (和 Vendor.lua 的 Wanted 同一套: 产物 + 材料)
@@ -81,10 +82,10 @@ for (const id of [...npcIDs].sort((a, b) => a - b)) {
   lines.push(`  ${id}: "${esc(NPCS[id] || '')}",`);
 }
 lines.push('};');
-lines.push('/* [物品ID, 英文名, 买价(铜), 图标名, "商人ID,商人ID", 是否本插件材料] */');
+lines.push('/* [物品ID, 英文名, 买价(铜), 图标名, "商人ID,商人ID", 是否本插件材料, 中文名] */');
 lines.push('const SHOP_GOODS = [');
 for (const r of sample) {
-  lines.push(`  [${r.id}, "${esc(r.name)}", ${r.price}, "${esc(r.icon)}", "${r.npcs.join(',')}", ${wanted.has(r.id) ? 1 : 0}],`);
+  lines.push(`  [${r.id}, "${esc(r.name)}", ${r.price}, "${esc(r.icon)}", "${r.npcs.join(',')}", ${wanted.has(r.id) ? 1 : 0}, "${esc(r.zh)}"],`);
 }
 lines.push('];');
 lines.push('/* SHOP_DATA_END */');

@@ -170,16 +170,19 @@ local function ItemName(rec, allowRequest)
             end
         end
     end
+    -- 内置中文名排在英文前面: 中文客户端看到的就是中文, 也不用等客户端回包
+    if type(rec.zh) == "string" and rec.zh ~= "" then return rec.zh end
     if type(rec.name) == "string" and rec.name ~= "" then return rec.name end
     return "#" .. tostring(rec.id)
 end
 M.ItemName = function(rec) return ItemName(rec, true) end
 
--- 搜索要比两串名字: 客户端本地化名 (中文) 和快照英文名。
--- 只比其中一个的话, 中文客户端搜英文搜不到、搜中文又得等回包 —— 两边都试才算全。
+-- 搜索要比三串名字: 客户端回包的本地化名、内置中文名、快照英文名。
+-- 只比其中一个的话, 中文客户端搜英文搜不到、搜中文又搜不到英文, 两边都得试。
 local function NameHas(rec, q)
     local loc = itemNameCache[rec.id] or PersistedName(rec.id)
     if type(loc) == "string" and loc ~= "" and loc:lower():find(q, 1, true) then return true end
+    if type(rec.zh) == "string" and rec.zh ~= "" and rec.zh:lower():find(q, 1, true) then return true end
     local raw = rec.name
     if type(raw) == "string" and raw ~= "" and raw:lower():find(q, 1, true) then return true end
     return false
@@ -229,6 +232,7 @@ function M.Index()
             name  = f[1] or "",
             price = tonumber(f[2]) or 0,
             icon  = f[3] or "",
+            zh    = f[4] or "",      -- 中文名 (生成时从 RDbItems 抽的, 少数物品没有)
             npcs  = {},
         }
         idx.items[#idx.items + 1] = rec
@@ -338,10 +342,15 @@ function M.Sort(list, mode)
             return a.id < b.id
         end)
     else
-        -- 名字排序用快照里的英文源串: 本地化名要等物品数据回包才拿到,
-        -- 拿它当排序键会让列表边滚边重排 (行会跳)。
+        -- 名字排序用「内置中文名优先」的稳定键: 客户端回包的名字会变, 拿它当键
+        -- 会让列表边滚边重排 (行会跳)。中文按 UTF-8 字节序比较 (同部首的字相邻)。
+        local function key(r)
+            local zh = r.zh
+            if type(zh) == "string" and zh ~= "" then return zh:lower() end
+            return (r.name or ""):lower()
+        end
         table.sort(list, function(a, b)
-            local na, nb = (a.name or ""):lower(), (b.name or ""):lower()
+            local na, nb = key(a), key(b)
             if na ~= nb then return na < nb end
             return a.id < b.id
         end)
@@ -924,8 +933,6 @@ Render = function()
         local q = (searchEdit and searchEdit:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", "")
         if d.err then
             emptyText:SetText(d.err)
-        elseif q ~= "" and M.Warming() then
-            emptyText:SetText(format("没找到「%s」 —— 物品名还在后台加载, 稍等再搜", q))
         elseif q ~= "" then
             emptyText:SetText(format("没找到「%s」 —— 试试英文名, 或输入商人名", q))
         elseif M.onlyMats then
@@ -975,58 +982,6 @@ ApplyQuery = function(resetScroll)
 end
 M.Refresh = function() if frame then ApplyQuery() end end
 
---------------------------------------------------------------------------- 名字预热
-
--- 客户端本地就有全量物品名 (按客户端语言), 但要一件一件问 GetItemInfo 才拿得到。
--- 不预热的话, 中文客户端第一次搜中文必然 0 条 —— 快照里只有英文名。
--- 窗口打开后后台慢速扫一遍 (0.5s 问 3 件, 约 3 分钟问完 985 件), 拿到的名字写进
--- 存档, 之后再开窗口秒出。慢是为了别在开窗口那一下把物品查询打成一片。
-local warmIdx, warmRunning, warmLastTry = 0, false, 0
-
-function M.Warm()
-    if warmRunning then return end
-    local d = M.Index()
-    if warmIdx >= #d.items then return end
-    warmRunning = true
-
-    local step
-    step = function()
-        if not (frame and frame:IsShown()) then
-            warmRunning = false          -- 窗口关了先停, 下次打开接着问
-            return
-        end
-        local asked = 0
-        while warmIdx < #d.items and asked < 3 do
-            warmIdx = warmIdx + 1
-            local rec = d.items[warmIdx]
-            if not (itemNameCache[rec.id] or PersistedName(rec.id)) then
-                asked = asked + 1
-                ItemName(rec, true)
-            end
-        end
-        if warmIdx < #d.items then
-            C_Timer.After(0.5, step)
-        else
-            warmRunning = false
-            -- 扫完一轮: 名字可能刚好到, 重画一次 (有搜索词时结果会跟着变)
-            if frame and frame:IsShown() then pcall(ApplyQuery) end
-        end
-    end
-    step()
-end
-
--- 搜不到东西时再扫一轮 (名字可能是这一轮才补上的)。60 秒冷却, 免得边打字边重扫。
-function M.WarmRetry()
-    if warmRunning then return end
-    local now = GetTime() or 0
-    if now - warmLastTry < 60 then return end
-    warmLastTry = now
-    warmIdx = 0
-    M.Warm()
-end
-
-M.Warming = function() return warmRunning end
-
 --------------------------------------------------------------------------- 界面
 
 local function BuildTitle(parent)
@@ -1074,8 +1029,6 @@ local function BuildSearch(parent)
         searchHint:SetShown(t == "")
         if clearBtn then clearBtn:SetShown(t ~= "") end
         ApplyQuery(true)
-        -- 0 条时可能是本地化名还没问到, 让预热再跑一轮 (内部有 60 秒冷却)
-        if t ~= "" and #filtered == 0 then pcall(M.WarmRetry) end
     end)
     searchEdit = eb
 
@@ -1226,10 +1179,7 @@ function ns.MerchantUI.Build()
         f:SetPoint("CENTER", UIParent, "CENTER", -math.floor(pw * 0.25), 0)
     end
 
-    f:SetScript("OnShow", function()
-        ApplyQuery()
-        pcall(M.Warm)          -- 后台补物品名 (存档里没有的才问)
-    end)
+    f:SetScript("OnShow", function() ApplyQuery() end)
 
     -- 物品名字要等客户端数据回包, 回包前先用快照里的英文名。
     -- 只有「还有行没拿到本地化名」时才重画 (pendingName), 否则什么都不做。
