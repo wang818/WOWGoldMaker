@@ -347,7 +347,8 @@
   .auto-pop .ap-card {
     /* 272 装不下「56 标签 + 三组(输入框+单位字)」, 单位字会被挤到下一格的输入框上 */
     width: 300px; padding: 12px 14px 13px;
-    background: rgba(16,18,22,.98); border: 1px solid rgba(255,255,255,.13);
+    /* 不透明: 底下列表的行会从 .98 的底色里透出来, 看着像字叠字 */
+    background: #101216; border: 1px solid rgba(255,255,255,.13);
     border-radius: 6px; box-shadow: 0 12px 34px rgba(0,0,0,.6);
   }
   .auto-pop .ap-title { font-size: 11px; font-weight: 700; color: var(--gold); }
