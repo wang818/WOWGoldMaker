@@ -502,6 +502,13 @@
   .shop-tab.on { background: rgba(232,194,90,.85); color: var(--ink); }
 
   .shop-count { position: absolute; right: 46px; top: 8px; font-size: 9px; color: var(--muted); white-space: nowrap; }
+  /* 只在「自动购买」页出现: 打开总开关/间隔设置窗 */
+  .shop-autoset { position: absolute; right: 250px; top: 3px; display: none;
+    font-size: 8px; padding: 2px 7px; border-radius: 3px; cursor: pointer;
+    font-family: inherit; color: var(--gold); background: rgba(232,194,90,.12);
+    border: 1px solid rgba(232,194,90,.28); }
+  .shop-autoset:hover { background: rgba(232,194,90,.22); }
+  .shop-autoset.on { display: block; }
   .shop-close { position: absolute; right: 14px; top: 0; }
 
   .shop-search {
@@ -619,7 +626,7 @@
 </head>
 <body>
 
-<h1><b>WOWGOLDMAKER</b> · 单页预览 (v0.12.3)</h1>
+<h1><b>WOWGOLDMAKER</b> · 单页预览 (v0.12.4)</h1>
 
 <div class="window">
   <div class="shadow"></div>
@@ -708,7 +715,9 @@
     <div class="shop-tabs">
       <button class="shop-tab on" data-page="shop">货架</button>
       <button class="shop-tab" data-page="fav" id="favTab">收藏 0</button>
+      <button class="shop-tab" data-page="auto" id="autoTab">自动 0</button>
     </div>
+    <button class="shop-autoset" id="autoSetBtn" title="改总开关和扫描间隔">设置</button>
     <div class="shop-count" id="shopCount">985 种货 · 829 位商人 · 10903 条货架</div>
     <button class="close shop-close" title="关闭"><i class="x x1"></i><i class="x x2"></i></button>
 
@@ -740,7 +749,7 @@
 </div>
 
 <div class="settings">
-  <h2><span>金币工坊</span> v0.12.3</h2>
+  <h2><span>金币工坊</span> v0.12.4</h2>
   <div class="sub">魔兽世界无限服 · 金币工具箱</div>
   <hr>
   <div class="row" id="row1"><div class="box"><span class="check">✓</span></div><span class="lbl">登录后自动呼出主界面</span></div>
@@ -970,11 +979,15 @@
        还没初始化, 直接调 apply() 会撞上暂时性死区, 把整个主界面渲染打断。 */
     if (qp.get("demoAuto")) {
       setTimeout(() => {
-        AUTO.set("亚麻布", { p: 120 });
         AUTO.set("宁神花", { p: 350 });
+        AUTO.set("空瓶", { p: 120 });
         renderList();
+        if (window.wgmShopRefresh) window.wgmShopRefresh();
       }, 60);
     }
+
+    /* 给商人货架的「自动购买」页用: 点那边的行也打开这个浮窗 */
+    window.wgmEditAuto = open;
 
     /* 点材料行的「自动」: 捕获阶段先拦下来, 免得冒泡到行上的其它点击 */
     document.addEventListener("click", (e) => {
@@ -1051,6 +1064,10 @@
     pop.addEventListener("click", (e) => { if (e.target === pop) pop.classList.remove("on"); });
 
     const openCfg = () => { paint(); pop.classList.add("on"); gapBox.focus(); };
+    /* 商人货架的自动购买页要能改开关/间隔, 摘要也跟着那边的列表走 */
+    window.wgmAutoCfg = openCfg;
+    window.wgmAutoSummary = () => (CFG.on ? "开着" : "关着") + " · " + AUTO.size
+      + " 件 · 每 " + CFG.gap + " 秒 · 有货就买";
     const $setBtn = document.getElementById("setBtn");
     if ($setBtn) $setBtn.onclick = openCfg;
 
@@ -3518,6 +3535,9 @@ const SHOP_GOODS = [
   const $toast = document.getElementById("shopToast");
   const $toastText = document.getElementById("shopToastText");
   const $favTab = document.getElementById("favTab");
+  const $autoTab = document.getElementById("autoTab");
+  const $autoSetBtn = document.getElementById("autoSetBtn");
+  const $foot = document.querySelector(".shop-foot");
   const $tabs = Array.from(document.querySelectorAll(".shop-tab"));
 
   const BASE_W = 440, BASE_H = 500, PAD = 24, SCALE_MAX = 2.6;
@@ -3576,13 +3596,24 @@ const SHOP_GOODS = [
 
   /* ---------- 收藏 (对应 db.favItems) ----------
      favOrder 按「最近收藏在前」排, 收藏页默认就按这个顺序看 */
-  let page = "shop";                       // "shop" = 全部货架, "fav" = 我的收藏
+  let page = "shop";                       // "shop" = 全部货架, "fav" = 我的收藏, "auto" = 自动购买
   let favOrder = [];
   const FAV = new Set();
   function setFav(id, on) {
     if (on && !FAV.has(id)) { FAV.add(id); favOrder.unshift(id); }
     else if (!on && FAV.has(id)) { FAV.delete(id); favOrder = favOrder.filter((x) => x !== id); }
     $favTab.textContent = "收藏 " + FAV.size;
+  }
+
+  /* 自动购买页的 base: AUTO 按材料名存, 这里映射回货架记录, 好复用同一套行渲染。
+     price 换成单价上限 —— 和 MerchantUI.AutoRecords() 一个意思。 */
+  function autoBase() {
+    const out = [];
+    for (const [name, cfg] of AUTO) {
+      const g = ALL.find((x) => (x.zh || x.name) === name || (x.zh || "").includes(name));
+      if (g) out.push({ ...g, autoName: name, autoP: cfg.p, price: cfg.p });
+    }
+    return out;
   }
 
   const SORTS = [
@@ -3608,7 +3639,7 @@ const SHOP_GOODS = [
     /* 收藏页只在收藏里筛: 搜商人名时「该商人的货」也被这条 base 限制住 */
     const base = page === "fav"
       ? favOrder.map((id) => ALL.find((g) => g.id === id)).filter(Boolean)
-      : ALL;
+      : (page === "auto" ? autoBase() : ALL);
 
     view = base.filter((g) => {
       if (onlyMats && !g.mat) return false;
@@ -3632,6 +3663,9 @@ const SHOP_GOODS = [
     $list.scrollTop = 0;
   }
 
+  /* 主界面的 ?demoAuto=1 会往 AUTO 塞演示数据, 塞完让这边重画一次 */
+  window.wgmShopRefresh = apply;
+
   /* 价格列只有 96px: 先试精确写法, 放不下退成短写 (对应 MerchantUI.lua 的 PriceText) */
   function priceText(p) {
     if (!(p > 0)) return "无价";
@@ -3645,7 +3679,11 @@ const SHOP_GOODS = [
     const q = query.trim();
     const zh = /[\u4e00-\u9fff]/.test(q);
     let icon = "?", title, sub;
-    if (page === "fav") {
+    if (page === "auto") {
+      icon = "✦";
+      title = q ? "自动购买里没有「" + esc(q) + "」" : "还没有自动购买";
+      sub = q ? "清空搜索看看全部" : "在材料行点「自动」设一个单价上限";
+    } else if (page === "fav") {
       icon = "☆";
       title = q ? "收藏里没有「" + esc(q) + "」" : "还没有收藏";
       sub = q ? "清空搜索看看全部收藏" : "在货架上点每行开头的 ☆ 收进来";
@@ -3669,19 +3707,24 @@ const SHOP_GOODS = [
   }
 
   function paint() {
+    $autoTab.textContent = "自动 " + AUTO.size;
     const html = [];
+    const isAuto = page === "auto";
     for (const it of view) {
       const open = expanded.has(it.id);
+      const caret = isAuto ? "" : (it.npcs.length ? (open ? "-" : "+") : "");
+      const cnt = isAuto ? "背包 7" : it.npcs.length + " 家";
+      const price = isAuto ? priceText(it.autoP || 0) : priceText(it.price);
       html.push(
         '<div class="srow' + (open ? " open" : "") + '" data-id="' + it.id + '">' +
         '<span class="star' + (FAV.has(it.id) ? " on" : "") + '" data-star="' + it.id + '"' +
         ' title="' + (FAV.has(it.id) ? "取消收藏" : "加入收藏") + '">' +
         (FAV.has(it.id) ? "★" : "☆") + "</span>" +
-        '<span class="caret">' + (it.npcs.length ? (open ? "-" : "+") : "") + "</span>" +
+        '<span class="caret">' + caret + "</span>" +
         '<span class="sicon" style="' + iconStyle(it.id) + '">' + esc(dispName(it).slice(0, 1)) + "</span>" +
         '<span class="sname">' + esc(dispName(it)) + "</span>" +
-        '<span class="scnt">' + it.npcs.length + " 家</span>" +
-        '<span class="sprice">' + priceText(it.price) + "</span>" +
+        '<span class="scnt">' + cnt + "</span>" +
+        '<span class="sprice">' + price + "</span>" +
         "</div>"
       );
       if (open) {
@@ -3699,7 +3742,12 @@ const SHOP_GOODS = [
       }
     }
     $list.innerHTML = html.length ? html.join("") : emptyHTML();
-    if (page === "fav") {
+    if (page === "auto") {
+      const total = AUTO.size;
+      $count.textContent = view.length === total
+        ? (window.wgmAutoSummary ? window.wgmAutoSummary() : "关着 · " + total + " 件 · 每 60 秒 · 有货就买")
+        : "筛出 " + view.length + " / " + total + " 件自动购买";
+    } else if (page === "fav") {
       const total = favOrder.length;
       $count.textContent = total === 0
         ? "一件都没收"
@@ -3757,6 +3805,11 @@ const SHOP_GOODS = [
     const row = e.target.closest(".srow");
     if (!row) return;
     const id = +row.dataset.id;
+    if (page === "auto") {
+      const it = view.find((v) => v.id === id);
+      if (it && window.wgmEditAuto) window.wgmEditAuto(it.autoName || dispName(it));
+      return;                          // 自动购买页不展开商人名单
+    }
     if (expanded.has(id)) expanded.delete(id); else expanded.add(id);
     paint();
   });
@@ -3775,7 +3828,7 @@ const SHOP_GOODS = [
     let i = modes.findIndex((s) => s.key === sortMode);
     i = (i + 1) % modes.length;
     sortMode = modes[i].key;
-    $sort.textContent = modes[i].label;
+    $sort.textContent = (page === "auto" && sortMode === "price") ? "上限 ↓" : modes[i].label;
     apply();
   });
   $filter.addEventListener("click", () => {
@@ -3785,18 +3838,28 @@ const SHOP_GOODS = [
     apply();
   });
 
-  /* ---------- 页签: 全部货架 / 我的收藏 ---------- */
+  /* ---------- 页签: 全部货架 / 我的收藏 / 自动购买 ---------- */
   function setPage(p) {
-    page = p === "fav" ? "fav" : "shop";
+    page = (p === "fav" || p === "auto") ? p : "shop";
+    if (page === "auto") sortMode = "price";       // 进来先按上限排
     if (page !== "fav" && sortMode === "fav") sortMode = "price";
-    $sort.textContent = SORTS.find((x) => x.key === sortMode).label;
+    $sort.textContent = (page === "auto" && sortMode === "price")
+      ? "上限 ↓" : SORTS.find((x) => x.key === sortMode).label;
     for (const b of $tabs) b.classList.toggle("on", b.dataset.page === page);
+    $autoTab.textContent = "自动 " + AUTO.size;
+    $autoSetBtn.classList.toggle("on", page === "auto");
+    $foot.textContent = page === "auto"
+      ? "左键改单价上限 / 移除 · 右键在拍卖行搜索 · 右上角「设置」改开关和间隔"
+      : "★ 收藏 · 左键物品展开商人 · 左键商人设路径点 · 右键物品在拍卖行搜索";
     if ($search.value) { $search.value = ""; query = ""; }   // 换页不带搜索词
     apply();
   }
   for (const b of $tabs) {
     b.addEventListener("click", () => setPage(b.dataset.page));
   }
+  $autoSetBtn.addEventListener("click", () => {
+    if (window.wgmAutoCfg) window.wgmAutoCfg();
+  });
 
   /* ---------- 视图切换 (主界面 / 商人货架) ---------- */
   function setMode(mode) {
@@ -3836,6 +3899,7 @@ const SHOP_GOODS = [
   }
   /* 截图用: ?view=shop&tab=fav 直接停在「我的收藏」 */
   if (qs.get("view") === "shop" && qs.get("tab") === "fav") setPage("fav");
+  if (qs.get("view") === "shop" && qs.get("tab") === "auto") setPage("auto");
   /* 截图用: ?view=shop&mats=1 打开「只看材料」 */
   if (qs.get("view") === "shop" && qs.get("mats") === "1") {
     $filter.click();

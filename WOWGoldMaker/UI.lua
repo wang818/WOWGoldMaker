@@ -2486,7 +2486,9 @@ local function BuildNpcEditor()
     -- 半透明底会把行文字透上来, 看着像糊在一起
     local f = T.Glass(frame, 300, 126, "panel")
     f:SetFrameStrata(ns.DB().strata or "DIALOG")
-    f:SetFrameLevel((frame:GetFrameLevel() or 200) + 20)
+    -- 主面板可能还没建 (从商人货架直接点进来), 取不到层级就用个固定基数
+    local baseLevel = (frame and frame.GetFrameLevel) and frame:GetFrameLevel() or 200
+    f:SetFrameLevel(baseLevel + 20)
     f:SetClampedToScreen(true)
     f:EnableMouse(true)
     f:SetMovable(true)
@@ -2710,11 +2712,15 @@ local AUTO_FRAME_W, AUTO_FRAME_H = 340, 146
 
 local function BuildAutoEditor()
     if autoEditor then return autoEditor end
-    if not frame then return nil end
+    -- 挂 UIParent 而不是主面板: 从商人货架的「自动购买」页点进来时,
+    -- 主面板可能压根没打开, 挂它上面浮窗会跟着藏起来
+    if not UIParent then return nil end
 
-    local f = T.Glass(frame, AUTO_FRAME_W, AUTO_FRAME_H, "panel")
+    local f = T.Glass(UIParent, AUTO_FRAME_W, AUTO_FRAME_H, "panel")
     f:SetFrameStrata(ns.DB().strata or "DIALOG")
-    f:SetFrameLevel((frame:GetFrameLevel() or 200) + 20)
+    -- 主面板可能还没建 (从商人货架直接点进来), 取不到层级就用个固定基数
+    local baseLevel = (frame and frame.GetFrameLevel) and frame:GetFrameLevel() or 200
+    f:SetFrameLevel(baseLevel + 20)
     f:SetClampedToScreen(true)
     f:EnableMouse(true)
     f:SetMovable(true)
@@ -2836,6 +2842,13 @@ local function BuildAutoEditor()
         end
     end
 
+    -- 商人货架开着「自动购买」页时, 这里的增删改要立刻反映到那边
+    local function RefreshAutoList()
+        if ns.MerchantUI and ns.MerchantUI.Refresh then
+            pcall(ns.MerchantUI.Refresh)
+        end
+    end
+
     local function Save()
         local id = f.itemID
         if not id then f:Hide(); return end
@@ -2844,6 +2857,7 @@ local function BuildAutoEditor()
             ns.AutoBuy.Remove(id)
             f:Hide()
             RefreshCell(id)
+            RefreshAutoList()
             ns.UI.Notify("已从自动购买列表移除: " .. (f.label or ("#" .. id)), 3)
             return
         end
@@ -2859,6 +2873,7 @@ local function BuildAutoEditor()
         ns.AutoBuy.Set(id, total)
         f:Hide()
         RefreshCell(id)
+        RefreshAutoList()
         -- 明确告诉玩家「加进去了, 但要不要真买取决于总开关」—— 免得以为设置完就会自动买
         ns.UI.Notify(format("已加入自动购买: %s · ≤ %s/个 · 有货就买%s",
             f.label or ("#" .. id), ns.NPC.MoneyEx(total),
@@ -2898,6 +2913,7 @@ local function BuildAutoEditor()
         if f.itemID then
             ns.AutoBuy.Remove(f.itemID)
             RefreshCell(f.itemID)
+            RefreshAutoList()
         end
         f:Hide()
     end)
@@ -2950,7 +2966,7 @@ function ns.UI.EditAutoBuy(itemID, name, cell)
     if e.refreshHint then e.refreshHint() end
 
     e:ClearAllPoints()
-    e:SetPoint("CENTER", frame, "CENTER", 0, 0)
+    e:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
     e:Show()
     local box = e.boxes[3]
     box:SetFocus()
@@ -2964,12 +2980,15 @@ local autoCfg
 
 local function BuildAutoCfg()
     if autoCfg then return autoCfg end
-    if not frame then return nil end
+    if not UIParent then return nil end
 
+    -- 和改价浮窗一样挂 UIParent: 商人货架页上的「设置」按钮也能打开它
     -- 去掉「单轮最多花」那一行之后矮了一截; 提示仍然是两行
-    local f = T.Glass(frame, 320, 168, "panel")
+    local f = T.Glass(UIParent, 320, 168, "panel")
     f:SetFrameStrata(ns.DB().strata or "DIALOG")
-    f:SetFrameLevel((frame:GetFrameLevel() or 200) + 20)
+    -- 主面板可能还没建 (从商人货架直接点进来), 取不到层级就用个固定基数
+    local baseLevel = (frame and frame.GetFrameLevel) and frame:GetFrameLevel() or 200
+    f:SetFrameLevel(baseLevel + 20)
     f:SetClampedToScreen(true)
     f:EnableMouse(true)
     f:SetMovable(true)
@@ -3071,7 +3090,7 @@ function ns.UI.AutoBuyConfig()
     if not f then return end
     f.paint()
     f:ClearAllPoints()
-    f:SetPoint("CENTER", frame, "CENTER", 0, 0)
+    f:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
     f:Show()
 end
 

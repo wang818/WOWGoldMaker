@@ -386,6 +386,7 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
             local list = AB.List()
             for _, e in ipairs(list) do AB.Remove(e.id) end
             ns.Print(format("自动购买列表已清空 (%d 件)", #list))
+            if ns.MerchantUI and ns.MerchantUI.Refresh then pcall(ns.MerchantUI.Refresh) end
         elseif sub:match("^加") or sub:match("^add") then
             local id, g = sub:match("(%d+)%s+(%d+)")
             if not (id and g) then
@@ -394,6 +395,14 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
                 AB.Set(tonumber(id), tonumber(g) * 10000)
                 ns.Print(format("已加入自动购买: #%s ≤ %s 金%s",
                     id, g, AB.Enabled() and "" or " (总开关还关着)"))
+                if ns.MerchantUI and ns.MerchantUI.Refresh then pcall(ns.MerchantUI.Refresh) end
+            end
+        elseif sub == "面板" or sub == "page" or sub == "ui" then
+            -- 图形界面: 商人货架的第三个页签, 能逐条改价/移除, 顶部还能改开关和间隔
+            if ns.MerchantUI and ns.MerchantUI.ShowAuto then
+                ns.MerchantUI.ShowAuto()
+            else
+                ns.Print("|cffff5555商人货架模块未加载|r")
             end
         elseif sub:match("^间隔") or sub:match("^频率") or sub:match("^gap") then
             -- 最小 1 秒, 上限不设: 填多少就多少, 只把 0 / 负数 / 非数字抬到 1 或退回默认
@@ -405,7 +414,7 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
                     AB.Enabled() and "" or " (总开关还关着)"))
             end
         else
-            ns.Print("用法: /wgm 自动 [开|关|扫|列|清空|间隔 <秒>|加 <ID> <金>]")
+            ns.Print("用法: /wgm 自动 [开|关|扫|列|面板|清空|间隔 <秒>|加 <ID> <金>]")
         end
     elseif msg:match("^search") or msg:match("^搜索") then
         -- 手动试一下「在拍卖行里搜索某件物品」, 不用去列表里点
@@ -488,6 +497,7 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
         print("  |cffe8c25a/wgm 收藏|r       打开「我的收藏」(货架行首点 ★ 收进来)")
         print("  |cffe8c25a/wgm 收藏 <词>|r  在我的收藏里搜索")
         print("  |cffe8c25a/wgm 自动|r       自动购买设置 (真花钱, 默认关)")
+        print("  |cffe8c25a/wgm 自动 面板|r    打开自动购买列表 (可改价/移除)")
         print("  |cffe8c25a/wgm 自动 间隔 <秒>|r 改扫描间隔 (最小 1 秒, 不设上限)")
         print("  |cffe8c25a/wgm vendor report|r 商人价目表 / 当前货架报告")
         print("  |cffe8c25a/wgm stock|r      商人货架 (同 /wgm 商人)")

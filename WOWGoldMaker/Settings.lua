@@ -122,6 +122,19 @@ function ns.BuildSettings()
         if ns.UI and ns.UI.AutoBuyConfig then ns.UI.AutoBuyConfig() end
     end)
 
+    local autoList = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    autoList:SetSize(140, 24)
+    autoList:SetPoint("LEFT", auto, "RIGHT", 10, 0)
+    autoList:SetText("自动购买列表")
+    autoList:SetScript("OnClick", function()
+        if SettingsPanel and HideUIPanel then
+            pcall(HideUIPanel, SettingsPanel)
+        end
+        if ns.MerchantUI and ns.MerchantUI.ShowAuto then
+            ns.MerchantUI.ShowAuto()
+        end
+    end)
+
     -- 命令说明
     local help = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
     help:SetPoint("TOPLEFT", 20, -264)

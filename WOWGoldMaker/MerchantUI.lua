@@ -60,14 +60,14 @@ local frame, content, contentW
 local scroll, listContent, track, thumb, sbar
 local searchEdit, searchHint, clearBtn
 local sortBtn, filterBtn, countText, emptyText
-local shopTab, favTab
+local shopTab, favTab, autoTab, autoSetBtn, footerHint
 local itemPool, npcPool = {}, {}
 local itemUsed, npcUsed = 0, 0
 
 local view = { entries = {}, off = {}, n = 0, height = 0 }   -- 当前渲染用的扁平行表
 local filtered = {}          -- 当前筛选结果 (物品记录数组)
 local expanded = {}          -- itemID -> true (展开了商人子行)
-local page = "shop"          -- "shop" = 全部货架, "fav" = 我的收藏
+local page = "shop"          -- "shop" = 全部货架, "fav" = 我的收藏, "auto" = 自动购买
 
 -- 前向声明 (下面几处互相引用)
 local Render, UpdateThumb, RefreshCount, ApplyQuery, SetPage, PaintTabs, PaintStar
@@ -332,6 +332,36 @@ function M.FavRecords()
     return out
 end
 
+-- 自动购买页的记录: 从 AutoBuy 的列表拼出和货架记录同形的 rec, 好复用同一套行池。
+-- 快照里有这件就借它的名字/图标; 通过 /wgm 自动 加 进来的 ID 不一定在货架快照里,
+-- 这时退到客户端的 GetItemInfo, 再不行显示 #ID, 但不能让这一页变空白。
+function M.AutoRecords()
+    local AB = ns.AutoBuy
+    local out = {}
+    if not (AB and AB.List) then return out end
+
+    local d = M.Index()
+    for _, e in ipairs(AB.List()) do
+        local snap = d.byID[e.id]
+        local name
+        if not snap and type(GetItemInfo) == "function" then
+            local ok, n = pcall(GetItemInfo, e.id)
+            if ok and type(n) == "string" and n ~= "" then name = n end
+        end
+        out[#out + 1] = {
+            id = e.id,
+            name = (snap and snap.name) or name,
+            zh = snap and snap.zh or nil,
+            icon = snap and snap.icon or nil,
+            npcs = (snap and snap.npcs) or {},
+            -- price 字段给通用的「买价」排序用, 在自动购买页它表示单价上限
+            price = e.p,
+            autoP = e.p,
+        }
+    end
+    return out
+end
+
 --------------------------------------------------------------------------- 数据: 筛选 / 排序
 
 local SORTS = {
@@ -343,6 +373,8 @@ local SORTS = {
 local sortMode = "price"
 
 local function SortLabel(key)
+    -- 自动购买页的 price 字段装的是「单价上限」, 按钮别再写「买价」
+    if page == "auto" and key == "price" then return "上限 ↓" end
     for _, v in ipairs(SORTS) do
         if v.key == key then return v.label end
     end
@@ -745,6 +777,18 @@ local function ItemTooltip(anchor, rec)
 
     TooltipAtCursor(anchor)
     GameTooltip:ClearLines()
+
+    if page == "auto" then
+        GameTooltip:AddLine(name, 1, 1, 1)
+        GameTooltip:AddLine(" ")
+        GameTooltip:AddLine(format("单价上限 %s/个", Money(rec.autoP or 0)), 1, 0.82, 0.35)
+        local have = (ns.AutoBuy and ns.AutoBuy.Have and ns.AutoBuy.Have(rec.id)) or 0
+        GameTooltip:AddLine(format("背包 %d 个 · 拍卖行低于上限就买", have), 0.82, 0.84, 0.88)
+        GameTooltip:AddLine("|cff8a929e左键改价 / 移除 · 右键在拍卖行搜索|r", 0.55, 0.58, 0.62)
+        GameTooltip:Show()
+        return
+    end
+
     if link then
         pcall(GameTooltip.SetHyperlink, GameTooltip, link)
     else
@@ -816,6 +860,11 @@ local function NewItemRow()
         local rec = s.entry.rec
         if button == "RightButton" then
             if ns.UI and ns.UI.SearchInAH then ns.UI.SearchInAH(rec.id, KnownName(rec)) end
+            return
+        end
+        if page == "auto" then
+            -- 自动购买页左键 = 改这条的单价上限 / 移除, 不展开商人子行
+            if ns.UI and ns.UI.EditAutoBuy then ns.UI.EditAutoBuy(rec.id, KnownName(rec), r) end
             return
         end
         if expanded[rec.id] then
@@ -986,19 +1035,28 @@ local function PaintItem(r, e, y, cw)
 
     r.bg:SetColorTexture(1, 1, 1, r.open and 0.05 or 0)
     PaintStar(r)
-    r.caret:SetText(#rec.npcs > 0 and (r.open and "-" or "+") or "")
+    local isAuto = (page == "auto")
+    r.caret:SetText((not isAuto and #rec.npcs > 0) and (r.open and "-" or "+") or "")
     r.icon:SetTexture(IconOf(rec))
     r.title:SetText(ItemName(rec, true))
 
-    -- 右侧先摆价格, 再让「N 家」贴在价格左边, 最后把剩下的宽度给名字
+    -- 右侧先摆价格, 再让「N 家 / 背包 N」贴在价格左边, 最后把剩下的宽度给名字
     r.price:ClearAllPoints()
     r.price:SetPoint("RIGHT", r, "RIGHT", -8, 0)
     r.cnt:ClearAllPoints()
     r.cnt:SetPoint("RIGHT", r.price, "LEFT", -6, 0)
-    r.cnt:SetText(format("%d 家", #rec.npcs))
 
-    local price = PriceOf(rec)
-    r.price:SetText(price and PriceText(price) or "|cff8a929e无价|r")
+    if isAuto then
+        -- 自动购买页的「价格」是玩家设的单价上限, 右边挂背包数量而不是商人数
+        local have = (ns.AutoBuy and ns.AutoBuy.Have and ns.AutoBuy.Have(rec.id)) or 0
+        r.cnt:SetText(format("背包 %d", have))
+        r.price:SetText((rec.autoP and rec.autoP > 0) and PriceText(rec.autoP)
+            or "|cff8a929e无上限|r")
+    else
+        r.cnt:SetText(format("%d 家", #rec.npcs))
+        local price = PriceOf(rec)
+        r.price:SetText(price and PriceText(price) or "|cff8a929e无价|r")
+    end
 
     -- 45 = 星标 14 + 展开符 + 图标 + 间隙; 剩下给名字 (再留 16 给「N 家」前的空)
     local titleW = cw - 45 - PRICE_W - CNT_W - 16
@@ -1079,9 +1137,13 @@ Render = function()
         elseif q ~= "" then
             if page == "fav" then
                 emptyText:SetText(format("收藏里没有「%s」 —— 清空搜索看看全部收藏", q))
+            elseif page == "auto" then
+                emptyText:SetText(format("自动购买里没有「%s」 —— 清空搜索看看全部", q))
             else
                 emptyText:SetText(format("没找到「%s」 —— 试试英文名, 或输入商人名", q))
             end
+        elseif page == "auto" then
+            emptyText:SetText("还没有自动购买 —— 在材料行点「自动」设一个单价上限")
         elseif page == "fav" then
             -- 收藏页空着分两种: 一件都没收 / 收了但被「材料」筛掉了
             if M.FavCount() == 0 then
@@ -1103,6 +1165,18 @@ end
 
 RefreshCount = function()
     if not countText then return end
+    if page == "auto" then
+        local AB = ns.AutoBuy
+        local total = (AB and AB.Count and AB.Count()) or 0
+        if #filtered == total and AB and AB.Summary then
+            countText:SetText(AB.Summary())       -- 开关/件数/间隔一眼看全
+        elseif #filtered == 0 then
+            countText:SetText(format("|cffeb6b6b筛出 0|r |cff8a929e/ %d 件自动购买|r", total))
+        else
+            countText:SetText(format("筛出 %d |cff8a929e/ %d 件自动购买|r", #filtered, total))
+        end
+        return
+    end
     if page == "fav" then
         local total = M.FavCount()
         if total == 0 then
@@ -1136,12 +1210,25 @@ PaintTabs = function()
         favTab:SetActive(page == "fav")
         favTab.text:SetText(format("收藏 %d", M.FavCount()))
     end
+    if autoTab then
+        autoTab:SetActive(page == "auto")
+        autoTab.text:SetText(format("自动 %d",
+            (ns.AutoBuy and ns.AutoBuy.Count and ns.AutoBuy.Count()) or 0))
+    end
+    if autoSetBtn then autoSetBtn:SetShown(page == "auto") end
+    if footerHint then
+        footerHint:SetText(page == "auto"
+            and "左键改单价上限 / 移除 · 右键在拍卖行搜索 · 右上角「设置」改开关和间隔"
+            or "★ 收藏 · 左键物品展开商人 · 左键商人设路径点 · 右键物品在拍卖行搜索")
+    end
 end
 
 -- 切页: 换页时清掉搜索词 (从货架搜「瓶」切到收藏, 不该把关键词带过去),
 -- 排序方式如果在新页不存在 (最近收藏), 退回买价。
 SetPage = function(p)
-    page = (p == "fav") and "fav" or "shop"
+    page = (p == "fav" or p == "auto") and p or "shop"
+    -- 自动购买页进来就按「上限 ↓」排, 不然沿用上页的「最近收藏」会排不动
+    if page == "auto" then sortMode = "price" end
     if page ~= "fav" and sortMode == "fav" then sortMode = "price" end
     if sortBtn then sortBtn.text:SetText(SortLabel(sortMode)) end
     PaintTabs()
@@ -1157,7 +1244,8 @@ end
 ApplyQuery = function(resetScroll)
     local q = searchEdit and searchEdit:GetText() or ""
     local base
-    if page == "fav" then base = M.FavRecords() end
+    if page == "fav" then base = M.FavRecords()
+    elseif page == "auto" then base = M.AutoRecords() end
     filtered = M.Sort(M.Filter(q, M.onlyMats, base), sortMode)
     view = M.BuildView(filtered, expanded)
 
@@ -1176,7 +1264,12 @@ ApplyQuery = function(resetScroll)
     RefreshCount()
     Render()
 end
-M.Refresh = function() if frame then ApplyQuery() end end
+-- 外部改了自动购买列表 / 收藏后调这个: 页签上的件数和当前页内容一起刷新
+M.Refresh = function()
+    if not frame then return end
+    PaintTabs()
+    ApplyQuery()
+end
 
 --------------------------------------------------------------------------- 界面
 
@@ -1188,7 +1281,7 @@ local function BuildTitle(parent)
     local close = T.CloseButton(parent, function() ns.MerchantUI.Hide() end)
     close:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -(PAD - 6), TITLE_Y - 4)
 
-    -- 两个页签就是「两个页面」: 全部货架 / 我的收藏。收藏数量直接写在页签上。
+    -- 三个页签就是「三个页面」: 全部货架 / 我的收藏 / 自动购买。件数直接写在页签上。
     shopTab = NewChip(parent, 46, 18, "货架")
     shopTab:SetPoint("LEFT", title, "RIGHT", 10, 0)
     shopTab:SetScript("OnClick", function() SetPage("shop") end)
@@ -1197,15 +1290,26 @@ local function BuildTitle(parent)
     favTab:SetPoint("LEFT", shopTab, "RIGHT", 4, 0)
     favTab:SetScript("OnClick", function() SetPage("fav") end)
 
+    autoTab = NewChip(parent, 68, 18, "自动 0")
+    autoTab:SetPoint("LEFT", favTab, "RIGHT", 4, 0)
+    autoTab:SetScript("OnClick", function() SetPage("auto") end)
+
     countText = T.Text(parent, F_TIP + 1, C.muted)
     countText:SetPoint("RIGHT", close, "LEFT", -10, 0)
     countText:SetWordWrap(false)
     countText:SetText("")
 
-    local hint = T.Text(parent, F_TIP, C.faint)
-    hint:SetPoint("BOTTOMLEFT", parent, "BOTTOMLEFT", PAD, 11)
-    hint:SetText("★ 收藏 · 左键物品展开商人 · 左键商人设路径点 · 右键物品在拍卖行搜索")
-    hint:SetWordWrap(false)
+    -- 「设置」只在自动购买页出现: 开关和扫描间隔在那里改 (真花钱的功能, 别藏太深)
+    autoSetBtn = NewChip(parent, 44, 16, "设置")
+    autoSetBtn:SetPoint("RIGHT", countText, "LEFT", -8, 0)
+    autoSetBtn:SetScript("OnClick", function()
+        if ns.UI and ns.UI.AutoBuyConfig then ns.UI.AutoBuyConfig() end
+    end)
+
+    footerHint = T.Text(parent, F_TIP, C.faint)
+    footerHint:SetPoint("BOTTOMLEFT", parent, "BOTTOMLEFT", PAD, 11)
+    footerHint:SetText("★ 收藏 · 左键物品展开商人 · 左键商人设路径点 · 右键物品在拍卖行搜索")
+    footerHint:SetWordWrap(false)
 end
 
 local function BuildSearch(parent)
@@ -1398,7 +1502,7 @@ end
 
 --------------------------------------------------------------------------- 对外
 
--- p: 打开哪一页 ("shop" 全部货架 / "fav" 我的收藏), 不传就留在当前页
+-- p: 打开哪一页 ("shop" 全部货架 / "fav" 我的收藏 / "auto" 自动购买), 不传就留在当前页
 function ns.MerchantUI.Show(p)
     if not frame then
         local ok, err = pcall(ns.MerchantUI.Build)
@@ -1408,7 +1512,8 @@ function ns.MerchantUI.Show(p)
         end
     end
     if p then
-        page = (p == "fav") and "fav" or "shop"
+        page = (p == "fav" or p == "auto") and p or "shop"
+        if page == "auto" then sortMode = "price" end
         if page ~= "fav" and sortMode == "fav" then sortMode = "price" end
     end
     frame:Show()
@@ -1424,6 +1529,16 @@ end
 -- 我的收藏页。q 可选: /wgm 收藏 <词> 直接带关键词
 function ns.MerchantUI.ShowFav(q)
     ns.MerchantUI.Show("fav")
+    if q and q ~= "" and searchEdit then
+        searchEdit:SetText(q)
+        searchEdit:SetFocus()
+        searchEdit:HighlightText()
+    end
+end
+
+-- 自动购买列表页。q 可选: 打开时直接带关键词筛名字
+function ns.MerchantUI.ShowAuto(q)
+    ns.MerchantUI.Show("auto")
     if q and q ~= "" and searchEdit then
         searchEdit:SetText(q)
         searchEdit:SetFocus()
