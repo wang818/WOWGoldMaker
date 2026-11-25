@@ -44,7 +44,7 @@ local DEFAULTS = {
 
     -- 自动购买 (真花钱, 默认全关)
     autoBuyOn  = false,                                   -- 总开关: 拍卖行开着时每分钟扫一轮
-    autoBuy    = {},                                      -- itemID -> { p = 单价上限(铜), q = 目标数量 }
+    autoBuy    = {},                                      -- itemID -> { p = 单价上限(铜) }
     autoBuyCap = 2 * 10000,                               -- 单轮总花费上限 (铜), 默认 2 金
     autoBuyGap = 60,                                      -- 扫描间隔 (秒)
 }
@@ -379,7 +379,7 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
                 local AH = ns.Auction
                 for _, e in ipairs(list) do
                     local p = (AH and AH.MoneyEx) and AH.MoneyEx(e.p) or tostring(e.p)
-                    ns.Print(format("  #%d  ≤ %s/个  ×%d  (背包已有 %d)", e.id, p, e.q, AB.Have(e.id)))
+                    ns.Print(format("  #%d  ≤ %s/个  (背包已有 %d)", e.id, p, AB.Have(e.id)))
                 end
             end
         elseif sub == "清空" or sub == "clear" then
@@ -387,17 +387,16 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
             for _, e in ipairs(list) do AB.Remove(e.id) end
             ns.Print(format("自动购买列表已清空 (%d 件)", #list))
         elseif sub:match("^加") or sub:match("^add") then
-            local id, g, q = sub:match("(%d+)%s+(%d+)%s*(%d*)")
+            local id, g = sub:match("(%d+)%s+(%d+)")
             if not (id and g) then
-                ns.Print("用法: /wgm 自动 加 <物品ID> <金> [数量]")
+                ns.Print("用法: /wgm 自动 加 <物品ID> <金>  (只填单价上限, 买多少由单轮上限决定)")
             else
-                local qty = tonumber(q) or 3
-                AB.Set(tonumber(id), tonumber(g) * 10000, qty)
-                ns.Print(format("已加入自动购买: #%s ≤ %s 金 ×%d%s",
-                    id, g, qty, AB.Enabled() and "" or " (总开关还关着)"))
+                AB.Set(tonumber(id), tonumber(g) * 10000)
+                ns.Print(format("已加入自动购买: #%s ≤ %s 金%s",
+                    id, g, AB.Enabled() and "" or " (总开关还关着)"))
             end
         else
-            ns.Print("用法: /wgm 自动 [开|关|扫|列|清空|加 <ID> <金> [数量]]")
+            ns.Print("用法: /wgm 自动 [开|关|扫|列|清空|加 <ID> <金>]")
         end
     elseif msg:match("^search") or msg:match("^搜索") then
         -- 手动试一下「在拍卖行里搜索某件物品」, 不用去列表里点

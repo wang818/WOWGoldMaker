@@ -2696,16 +2696,23 @@ end
 
 --------------------------------------------------------------------------- 自动购买: 单价上限录入
 
--- 和上面「NPC 买价」同一个套路 (金/银/铜三格 + 回车保存), 只多一个「目标数量」。
--- 价格是**上限**: 拍卖行最低单价不高于它才会买, 高了就这一轮跳过。
+-- 和上面「NPC 买价」同一个套路 (金/银/铜三格 + 回车保存)。
+-- 价格是**上限**: 拍卖行最低单价不高于它就会买, 高了这一轮跳过; 没有目标数量,
+-- 买多少由「单轮花费上限」决定。
 -- 三个金额格全空 = 把这件从自动购买列表里去掉。
 local autoEditor
+
+-- 三格的横向布局。以前是 64 宽 / 步进 68, 单位字 ("金"/"银") 贴在格子右边,
+-- 正好压到下一格的左边缘上 —— 看上去就是「金」盖住了银的输入框。
+-- 现在格子 56 宽、步进 82, 留出 26 给单位字 + 空隙。
+local AUTO_CELL_W, AUTO_CELL_STEP = 56, 82
+local AUTO_FRAME_W, AUTO_FRAME_H = 340, 146
 
 local function BuildAutoEditor()
     if autoEditor then return autoEditor end
     if not frame then return nil end
 
-    local f = T.Glass(frame, 300, 172, "panel")
+    local f = T.Glass(frame, AUTO_FRAME_W, AUTO_FRAME_H, "panel")
     f:SetFrameStrata(ns.DB().strata or "DIALOG")
     f:SetFrameLevel((frame:GetFrameLevel() or 200) + 20)
     f:SetClampedToScreen(true)
@@ -2721,7 +2728,7 @@ local function BuildAutoEditor()
 
     local who = T.Text(f, 9, C.muted)
     who:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -5)
-    who:SetWidth(272)
+    who:SetWidth(AUTO_FRAME_W - 28)
     who:SetWordWrap(false)
 
     local plabel = T.Text(f, 9, C.faint)
@@ -2737,12 +2744,12 @@ local function BuildAutoEditor()
     local UNITS = { "金", "银", "铜" }
     local boxes, cells = {}, {}
     for i = 1, 3 do
-        local cell = T.Line(f, 64, 20, C.white, 0.06)
-        cell:SetPoint("TOPLEFT", plabel, "TOPLEFT", 62 + (i - 1) * 68, 2)
+        local cell = T.Line(f, AUTO_CELL_W, 20, C.white, 0.06)
+        cell:SetPoint("TOPLEFT", plabel, "TOPLEFT", 62 + (i - 1) * AUTO_CELL_STEP, 2)
         cells[i] = cell
 
         local eb = CreateFrame("EditBox", nil, f)
-        eb:SetSize(54, 16)
+        eb:SetSize(AUTO_CELL_W - 10, 16)
         eb:SetPoint("LEFT", cell, "LEFT", 5, 0)
         eb:SetFont(T.FontFile(), 11, "")
         eb:SetTextColor(T.rgb(C.text))
@@ -2758,34 +2765,18 @@ local function BuildAutoEditor()
         boxes[i] = eb
     end
 
-    local qlabel = T.Text(f, 9, C.faint)
-    qlabel:SetPoint("TOPLEFT", cells[1], "BOTTOMLEFT", 0, -10)
-    qlabel:SetWidth(56)
-    qlabel:SetText("目标数量")
-
-    local qcell = T.Line(f, 64, 20, C.white, 0.06)
-    qcell:SetPoint("TOPLEFT", qlabel, "TOPLEFT", 62, 2)
-
-    local qbox = CreateFrame("EditBox", nil, f)
-    qbox:SetSize(54, 16)
-    qbox:SetPoint("LEFT", qcell, "LEFT", 5, 0)
-    qbox:SetFont(T.FontFile(), 11, "")
-    qbox:SetTextColor(T.rgb(C.text))
-    qbox:SetAutoFocus(false)
-    qbox:SetNumeric(true)
-    qbox:SetMaxLetters(3)
-    qbox:SetTextInsets(1, 1, 0, 0)
-
-    local qunit = T.Text(f, 9, C.faint)
-    qunit:SetPoint("LEFT", qcell, "RIGHT", 3, 0)
-    qunit:SetText("个")
-
+    -- 提示分两行: 上面一行说「这个价会怎么买」(会变颜色), 下面一行是固定信息。
+    -- 挤成一行的话, 「≤ 1金20银0铜/个 · 有挂单就买 · 单轮上限 2金 · 背包已有 12 个」
+    -- 在 312 像素里放不下, 会被裁掉尾巴
     local hint = T.Text(f, 8, C.faint)
-    hint:SetPoint("TOPLEFT", qcell, "BOTTOMLEFT", 0, -8)
-    hint:SetWidth(272)
+    hint:SetPoint("TOPLEFT", cells[1], "BOTTOMLEFT", 0, -8)
+    hint:SetWidth(AUTO_FRAME_W - 28)
     hint:SetWordWrap(false)
 
-    local HINT = "背包已有 %d 个 · 低于或等于这个单价才买 · 金额全空 = 移出列表"
+    local sub = T.Text(f, 8, C.faint)
+    sub:SetPoint("TOPLEFT", hint, "BOTTOMLEFT", 0, -4)
+    sub:SetWidth(AUTO_FRAME_W - 28)
+    sub:SetWordWrap(false)
 
     local function Total()
         local g = tonumber(boxes[1]:GetText() or "") or 0
@@ -2802,16 +2793,10 @@ local function BuildAutoEditor()
         return true
     end
 
-    local function Qty()
-        local q = math.floor(tonumber(qbox:GetText() or "") or 0)
-        if q < 1 then q = 3 end
-        return q
-    end
-
     local function RefreshHint()
         if IsEmpty() then
             hint:SetTextColor(T.rgb(C.faint))
-            hint:SetText(format(HINT, f.have or 0))
+            hint:SetText("填一个单价上限, 有货就买")
             return
         end
         local total = Total()
@@ -2821,8 +2806,10 @@ local function BuildAutoEditor()
             return
         end
         hint:SetTextColor(T.rgb(C.gold))
-        hint:SetText(format("≤ %s/个 × 目标 %d 个 · 背包已有 %d 个",
-            ns.NPC.MoneyEx(total), Qty(), f.have or 0))
+        -- 说清楚「买多少」: 没有目标数量, 数量由单轮上限决定, 这句不写玩家会以为只买一个
+        local cap = (ns.AutoBuy and ns.AutoBuy.Cap and ns.AutoBuy.Cap()) or 0
+        hint:SetText(format("≤ %s/个 · 有挂单就买 · 单轮上限 %s",
+            ns.NPC.MoneyEx(total), ns.NPC.MoneyEx(cap)))
     end
 
     -- 银/铜超过 99 折上去, 免得三格数字加起来和总数对不上
@@ -2868,17 +2855,16 @@ local function BuildAutoEditor()
             return
         end
 
-        local q = Qty()
-        ns.AutoBuy.Set(id, total, q)
+        ns.AutoBuy.Set(id, total)
         f:Hide()
         RefreshCell(id)
         -- 明确告诉玩家「加进去了, 但要不要真买取决于总开关」—— 免得以为设置完就会自动买
-        ns.UI.Notify(format("已加入自动购买: %s · ≤ %s · 目标 %d 个%s",
-            f.label or ("#" .. id), ns.NPC.MoneyEx(total), q,
+        ns.UI.Notify(format("已加入自动购买: %s · ≤ %s/个 · 有货就买%s",
+            f.label or ("#" .. id), ns.NPC.MoneyEx(total),
             ns.AutoBuy.Enabled() and "" or " (总开关还关着)"), 4)
     end
 
-    local allBoxes = { boxes[1], boxes[2], boxes[3], qbox }
+    local allBoxes = { boxes[1], boxes[2], boxes[3] }
     for i = 1, #allBoxes do
         local idx = i
         local eb = allBoxes[idx]
@@ -2919,7 +2905,7 @@ local function BuildAutoEditor()
     cancel:SetPoint("RIGHT", del, "LEFT", -6, 0)
     cancel:SetScript("OnClick", function() f:Hide() end)
 
-    f.boxes, f.qbox, f.who, f.hint = boxes, qbox, who, hint
+    f.boxes, f.who, f.hint, f.sub = boxes, who, hint, sub
     f.save, f.del, f.cancel = save, del, cancel
     f.refreshHint, f.saveNow = RefreshHint, Save
     f:Hide()
@@ -2954,10 +2940,12 @@ function ns.UI.EditAutoBuy(itemID, name, cell)
     e.boxes[1]:SetText(has and tostring(g) or "")
     e.boxes[2]:SetText(has and tostring(s) or "")
     e.boxes[3]:SetText(has and tostring(k) or "")
-    e.qbox:SetText(tostring((cur and cur.q) or 3))
 
     e.who:SetText(e.label .. (cur and "  |cff4dc87a· 已在自动购买列表|r"
                                    or "  |cff8a929e· 还没设置|r"))
+    if e.sub then
+        e.sub:SetText(format("背包已有 %d 个 · 金额全空 = 移出列表", have))
+    end
     if e.refreshHint then e.refreshHint() end
 
     e:ClearAllPoints()
@@ -3041,7 +3029,7 @@ local function BuildAutoCfg()
     hint:SetPoint("TOPLEFT", capLabel, "BOTTOMLEFT", 0, -10)
     hint:SetWidth(272)
     hint:SetWordWrap(false)
-    hint:SetText("打开拍卖行后每分钟扫一轮 · 单价不高于设定值才买 · 买够目标数量就停")
+    hint:SetText("打开拍卖行后每分钟扫一轮 · 单价不高于设定值就买 · 买多少由单轮上限决定")
 
     local close = MakeMiniButton(f, 54, 18, "关闭窗口")
     close:SetPoint("BOTTOMRIGHT", -14, 12)

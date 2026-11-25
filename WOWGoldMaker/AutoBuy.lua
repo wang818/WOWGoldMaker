@@ -1,12 +1,13 @@
 ---------------------------------------------------------------------------
 -- WOWGoldMaker / AutoBuy.lua
--- 自动购买: 给一样材料设「单价上限」和「目标数量」, 拍卖行开着时每分钟扫一轮,
--- 单价不高于上限就自动买够目标数量。
+-- 自动购买: 给一样材料设「单价上限」, 拍卖行开着时每分钟扫一轮,
+-- 只要最低单价不高于上限就买 —— 不设目标数量, 有货就吃。
 --
--- **这是真花钱的功能**, 所以设了三道闸, 任何一道都能单独拦住:
+-- **这是真花钱的功能**, 所以设了两道闸, 任何一道都能单独拦住:
 --   1) 总开关 db.autoBuyOn —— 默认关闭, 必须手动开, 关窗口/重登都保持关闭状态
 --   2) 单轮总花费上限 db.autoBuyCap —— 一轮里所有自动购买加起来不超过这个数
---   3) 目标数量 —— 每件只在「还差几个」的范围里买, 买够了立刻停, 不会反复扫反复买
+-- 买多少由「这一轮还剩多少额度」决定, 没有「买够几个就停」的概念 ——
+-- 想要控制量就把上限调小, 或者把它从列表里移掉。
 --
 -- 另外每次真下单前还会再核一次: 拍卖行窗口必须开着、金币必须够、单价必须不高于上限。
 --
@@ -22,7 +23,10 @@ ns.AutoBuy = M
 
 local format = string.format
 
-local QTY_DEFAULT   = 3      -- 新加一件时的默认目标数量
+-- 单笔最多下单这么多个。没有目标数量之后, 数量 = 「本轮剩余额度 ÷ 单价」——
+-- 碰上 1 铜的货就会算出上万个, 客户端吃不下 (背包也装不下)。200 约十组,
+-- 想要更多就多等几轮, 每分钟一轮本来就够快。
+local MAX_ORDER     = 200
 local BUY_TIMEOUT   = 10     -- 单笔购买最多等多久 (秒)
 local CONFIRM_DELAY = 0.8    -- Start 之后隔多久补 Confirm
 local MAXLOG        = 40     -- 购买日志保留条数
@@ -94,7 +98,7 @@ end
 
 --------------------------------------------------------------------------- 列表
 
--- 单条: { p = 单价上限(铜), q = 目标数量 }
+-- 单条: { p = 单价上限(铜) }
 function M.Get(id)
     id = tonumber(id)
     if not id then return nil end
@@ -110,13 +114,12 @@ function M.PriceOf(id)
     return e and e.p or nil
 end
 
--- 加进自动购买列表 (已在列表里就是改价/改数量)
-function M.Set(id, price, qty)
+-- 加进自动购买列表 (已在列表里就是改价)。旧存档里的 q 字段直接忽略,
+-- 下次 Set 时会被覆盖掉, 不用专门写迁移。
+function M.Set(id, price)
     id, price = tonumber(id), tonumber(price)
     if not id or not price or price <= 0 then return nil end
-    qty = math.floor(tonumber(qty) or QTY_DEFAULT)
-    if qty < 1 then qty = QTY_DEFAULT end
-    Cfg()[id] = { p = math.floor(price), q = qty }
+    Cfg()[id] = { p = math.floor(price) }
     return Cfg()[id]
 end
 
@@ -137,7 +140,7 @@ end
 function M.List()
     local out = {}
     for id, e in pairs(Cfg()) do
-        out[#out + 1] = { id = id, p = e.p or 0, q = e.q or QTY_DEFAULT }
+        out[#out + 1] = { id = id, p = e.p or 0 }
     end
     table.sort(out, function(a, b) return a.id < b.id end)
     return out
@@ -146,12 +149,13 @@ end
 --------------------------------------------------------------------------- 背包 / 金额
 
 -- 背包里有多少个。刚下单的那几个客户端要过一会儿才算进背包, 这段空窗期里
--- GetItemCount 还是旧数 —— 直接拿它判断就会「以为没买到」再买一次。
--- 所以下单时记一个估算值 (下单后**应该**有多少个), 两者取大的。
+-- GetItemCount 还是旧数, 所以下单时记一个估算值 (下单后**应该**有多少个), 两者取大的。
+-- 现在没有「目标数量」了, 这个数只用在一处: 「自动」浮窗里那句「背包已有 N 个」,
+-- 让玩家刚买完就能看见数量涨了, 不用对着背包数。
 --
 -- 估算值带时间戳: 客户端一旦把货算进背包 (n >= 估算值) 就作废, 交给真实数量;
 -- 超过 EST_TTL 也强制作废 —— 否则玩家把这批货用掉/卖掉之后, 估算值还高高挂着,
--- 这件东西就再也不会被买了 (表现是「明明没有货了却一直不买」)。
+-- 浮窗里就一直显示一个虚高的「背包已有」。
 local EST_TTL = 30
 local bought = {}            -- itemID -> { n = 估算数量, at = 时间 }
 
@@ -348,9 +352,6 @@ RoundStep = function(list, i, capLeft)
     if pending then RoundDone(); return end         -- 上一笔还没结束, 下一轮再说
 
     local e = list[i]
-    local need = (e.q or QTY_DEFAULT) - Have(e.id)
-
-    if need <= 0 then again(capLeft); return end    -- 已经买够了: 不查也不买
     if not e.p or e.p <= 0 then again(capLeft); return end
 
     local AH = ns.Auction
@@ -365,9 +366,16 @@ RoundStep = function(list, i, capLeft)
         if not unit or unit <= 0 then again(capLeft); return end
         if unit > e.p then again(capLeft); return end          -- 高于上限: 不买
 
-        local afford = math.floor(capLeft / unit)
-        local qty = math.min(need, afford)
-        if qty < 1 then again(0); return end                   -- 剩下的额度不够买一个
+        -- 没有目标数量了: 这一轮「还剩多少额度」就买多少, 但要按剩下的件数均分 ——
+        -- 否则列表里第一件便宜货会把整轮额度一口吃掉, 后面的永远轮不到。
+        -- 均额连一个都买不起时, 至少让它买一个 (仍在总上限内), 不然贵的货会被饿死。
+        -- 单笔再兜一个 MAX_ORDER, 免得 1 铜的货一次算出上万个。
+        if capLeft < unit then again(0); return end             -- 剩下的额度连一个都不够
+        local share = math.floor(capLeft / (#list - i + 1))
+        if share < unit then share = unit end
+        local qty = math.floor(share / unit)
+        if qty > MAX_ORDER then qty = MAX_ORDER end
+        if qty < 1 then again(0); return end
 
         local name = NameText(e.id)
         local ok = StartPurchase(e.id, qty, unit, name)

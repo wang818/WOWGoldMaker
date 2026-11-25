@@ -345,24 +345,29 @@
     display: none; z-index: 40; align-items: center; justify-content: center; }
   .auto-pop.on { display: flex; }
   .auto-pop .ap-card {
-    width: 272px; padding: 12px 14px 13px;
+    /* 272 装不下「56 标签 + 三组(输入框+单位字)」, 单位字会被挤到下一格的输入框上 */
+    width: 300px; padding: 12px 14px 13px;
     background: rgba(16,18,22,.98); border: 1px solid rgba(255,255,255,.13);
     border-radius: 6px; box-shadow: 0 12px 34px rgba(0,0,0,.6);
   }
   .auto-pop .ap-title { font-size: 11px; font-weight: 700; color: var(--gold); }
   .auto-pop .ap-who { font-size: 9px; color: var(--muted); margin-top: 4px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .auto-pop .ap-row { display: flex; align-items: center; gap: 5px; margin-top: 9px; }
-  .auto-pop .ap-lbl { font-size: 8px; color: var(--faint); width: 56px; flex: 0 0 56px; }
+  .auto-pop .ap-row { display: flex; align-items: center; gap: 8px; margin-top: 9px; }
+  .auto-pop .ap-lbl { font-size: 8px; color: var(--faint); flex: 0 0 56px; }
+  /* 一组 = 输入框 + 单位字。三者都 flex:0 0 auto —— 让它们按固定宽度排,
+     而不是被 flex 挤压/溢出 (挤压时单位字会压到下一格上) */
+  .auto-pop .ap-cell { display: flex; align-items: center; gap: 3px; flex: 0 0 auto; }
+  .auto-pop .ap-cell i { font-style: normal; font-size: 8px; color: var(--faint); }
   .auto-pop input {
-    width: 44px; height: 18px; font-size: 10px; padding: 0 4px;
+    flex: 0 0 44px; width: 44px; height: 18px; font-size: 10px; padding: 0 4px;
     background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.13);
     border-radius: 3px; color: var(--text); outline: none;
   }
   .auto-pop input:focus { border-color: rgba(232,194,90,.55); }
-  .auto-pop .ap-unit { font-size: 8px; color: var(--faint); margin-right: 4px; }
   .auto-pop .ap-hint { font-size: 7.5px; color: var(--faint); margin-top: 8px;
     line-height: 1.4; }
+  .auto-pop .ap-hint.ap-sub { margin-top: 3px; }
   .auto-pop .ap-btns { display: flex; gap: 6px; margin-top: 11px; justify-content: flex-end; }
   .auto-pop .ap-btns button {
     font-size: 9px; padding: 4px 10px; border-radius: 3px; cursor: pointer;
@@ -602,7 +607,7 @@
 </head>
 <body>
 
-<h1><b>WOWGOLDMAKER</b> · 单页预览 (v0.12.0)</h1>
+<h1><b>WOWGOLDMAKER</b> · 单页预览 (v0.12.1)</h1>
 
 <div class="window">
   <div class="shadow"></div>
@@ -705,7 +710,7 @@
 </div>
 
 <div class="settings">
-  <h2><span>金币工坊</span> v0.12.0</h2>
+  <h2><span>金币工坊</span> v0.12.1</h2>
   <div class="sub">魔兽世界无限服 · 金币工具箱</div>
   <hr>
   <div class="row" id="row1"><div class="box"><span class="check">✓</span></div><span class="lbl">登录后自动呼出主界面</span></div>
@@ -818,7 +823,7 @@
   const $list = document.getElementById("list");
 
   /* ---------- 自动购买 (对应 AutoBuy.lua + UI.lua 的「自动」按钮) ----------
-     材料行右侧的「自动」按钮 -> 填单价上限 + 目标数量 -> 按钮变金色。
+     材料行右侧的「自动」按钮 -> 填单价上限 -> 按钮变金色。
      真下单的动作在游戏里由 AutoBuy.lua 每分钟扫一轮做, 预览只演示设置流程。 */
   (function initAutoBuy() {
     const host = $list.closest(".content");
@@ -831,17 +836,12 @@
         '<div class="ap-title">自动购买</div>' +
         '<div class="ap-who" id="apWho"></div>' +
         '<div class="ap-row"><span class="ap-lbl">单价不超过</span>' +
-          '<input id="apG" placeholder="金" maxlength="6" inputmode="numeric">' +
-          '<span class="ap-unit">金</span>' +
-          '<input id="apS" placeholder="银" maxlength="2" inputmode="numeric">' +
-          '<span class="ap-unit">银</span>' +
-          '<input id="apK" placeholder="铜" maxlength="2" inputmode="numeric">' +
-          '<span class="ap-unit">铜</span>' +
-        '</div>' +
-        '<div class="ap-row"><span class="ap-lbl">目标数量</span>' +
-          '<input id="apQ" maxlength="3" inputmode="numeric"><span class="ap-unit">个</span>' +
+          '<span class="ap-cell"><input id="apG" maxlength="6" inputmode="numeric"><i>金</i></span>' +
+          '<span class="ap-cell"><input id="apS" maxlength="2" inputmode="numeric"><i>银</i></span>' +
+          '<span class="ap-cell"><input id="apK" maxlength="2" inputmode="numeric"><i>铜</i></span>' +
         '</div>' +
         '<div class="ap-hint" id="apHint"></div>' +
+        '<div class="ap-hint ap-sub">金额全空 = 移出列表</div>' +
         '<div class="ap-btns">' +
           '<button id="apCancel">取消</button>' +
           '<button id="apDel">移除</button>' +
@@ -851,7 +851,7 @@
     host.appendChild(pop);
 
     const q = (id) => document.getElementById(id);
-    const G = q("apG"), S = q("apS"), K = q("apK"), Q = q("apQ");
+    const G = q("apG"), S = q("apS"), K = q("apK");
     const hint = q("apHint"), who = q("apWho");
 
     function total() {
@@ -862,14 +862,10 @@
     function empty() {
       return !G.value.trim() && !S.value.trim() && !K.value.trim();
     }
-    function qty() {
-      const v = parseInt(Q.value, 10);
-      return v > 0 ? v : 3;
-    }
 
     function refresh() {
       if (empty()) {
-        hint.textContent = "金额全空 = 把这件移出自动购买列表";
+        hint.textContent = "填一个单价上限, 有货就买";
         hint.style.color = "var(--faint)";
         return;
       }
@@ -879,7 +875,7 @@
         hint.style.color = "var(--red)";
         return;
       }
-      hint.textContent = "≤ " + moneyEx(t) + "/个 × 目标 " + qty() + " 个 · 低于或等于这个价才买";
+      hint.textContent = "≤ " + moneyEx(t) + "/个 · 有挂单就买 · 单轮上限 2金";
       hint.style.color = "var(--gold)";
     }
 
@@ -891,7 +887,6 @@
       G.value = p ? Math.floor(p / 10000) : "";
       S.value = p ? Math.floor((p % 10000) / 100) : "";
       K.value = p ? (p % 100) : "";
-      Q.value = cfg ? cfg.q : 3;
       refresh();
       pop.classList.add("on");
       K.focus();
@@ -909,14 +904,14 @@
       if (empty() || total() <= 0) {
         AUTO.delete(name);
       } else {
-        AUTO.set(name, { p: total(), q: qty() });
+        AUTO.set(name, { p: total() });
       }
       close();
       renderList();         // 重画列表, 按钮变金 / 变灰
     }
 
     /* 三个金额格只收数字 */
-    for (const el of [G, S, K, Q]) {
+    for (const el of [G, S, K]) {
       el.addEventListener("input", () => {
         el.value = el.value.replace(/\D/g, "");
         refresh();
@@ -945,8 +940,8 @@
        还没初始化, 直接调 apply() 会撞上暂时性死区, 把整个主界面渲染打断。 */
     if (qp.get("demoAuto")) {
       setTimeout(() => {
-        AUTO.set("亚麻布", { p: 120, q: 10 });
-        AUTO.set("宁神花", { p: 350, q: 3 });
+        AUTO.set("亚麻布", { p: 120 });
+        AUTO.set("宁神花", { p: 350 });
         renderList();
       }, 60);
     }
@@ -994,7 +989,7 @@
   function npcSellOf(name) { return ((hashOf(name) % 60) + 1) * 100 + 50; }
   function npcBuyOf(name) { const h = hashOf(name + "#buy"); return h % 3 === 0 ? ((h % 25) + 1) * 100 : 0; }
 
-  /* 自动购买表 (对应 db.autoBuy): 材料名 -> { p 单价上限(铜), q 目标数量 }。
+  /* 自动购买表 (对应 db.autoBuy): 材料名 -> { p 单价上限(铜) }。
      预览里按名字存, 游戏里按 itemID 存 —— 这里只需要验证交互和样式。 */
   const AUTO = new Map();
 
