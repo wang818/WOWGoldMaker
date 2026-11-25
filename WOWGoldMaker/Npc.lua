@@ -38,6 +38,13 @@ local function MoneyEx(c)
 end
 NPC.MoneyEx = MoneyEx
 
+-- 把铜拆成 金/银/铜 三段 (分三个输入框时要往各自格子里填)
+function NPC.SplitMoney(copper)
+    copper = math.floor(tonumber(copper) or 0)
+    if copper < 0 then copper = 0 end
+    return math.floor(copper / 10000), math.floor((copper % 10000) / 100), copper % 100
+end
+
 --------------------------------------------------------------------------- 卖给商人
 
 local sellCache = {}    -- itemID -> 铜 (false = 已知不可卖给商人)

@@ -2344,69 +2344,127 @@ local function BuildNpcEditor()
     who:SetWidth(272)
     who:SetWordWrap(false)
 
-    -- 输入框底色自己画: 用 InputBoxTemplate 会被 EllesmereUI 的皮肤改成另一个样子
-    local boxBG = T.Line(f, 272, 22, C.white, 0.06)
-    boxBG:SetPoint("TOPLEFT", who, "BOTTOMLEFT", 0, -8)
+    -- 金/银/铜 各一个格子, 只收数字: 一个框里打 "1金20银5铜" 单位一多就容易打错,
+    -- 分开填就不存在单位问题; 下面一行负责把三个格子翻成整钱, 随时能核对自己填的对不对
+    local UNITS = { "金", "银", "铜" }
+    local boxes, cells = {}, {}
+    for i = 1, 3 do
+        local cell = T.Line(f, 70, 20, C.white, 0.06)
+        cell:SetPoint("TOPLEFT", who, "BOTTOMLEFT", (i - 1) * 90, -8)
+        cells[i] = cell
 
-    local box = CreateFrame("EditBox", nil, f)
-    box:SetSize(264, 18)
-    box:SetPoint("LEFT", boxBG, "LEFT", 5, 0)
-    box:SetFont(T.FontFile(), 11, "")
-    box:SetTextColor(T.rgb(C.text))
-    box:SetAutoFocus(false)
-    box:SetMaxLetters(24)
-    box:SetTextInsets(1, 1, 0, 0)
+        local eb = CreateFrame("EditBox", nil, f)
+        eb:SetSize(60, 16)
+        eb:SetPoint("LEFT", cell, "LEFT", 5, 0)
+        eb:SetFont(T.FontFile(), 11, "")
+        eb:SetTextColor(T.rgb(C.text))
+        eb:SetAutoFocus(false)
+        eb:SetNumeric(true)               -- 只吃数字, 挡住 "1金" 这种混单位的写法
+        eb:SetMaxLetters(6)
+        eb:SetTextInsets(1, 1, 0, 0)
+
+        local lbl = T.Text(f, 9, C.faint)
+        lbl:SetPoint("LEFT", cell, "RIGHT", 4, 0)
+        lbl:SetWidth(14)
+        lbl:SetText(UNITS[i])
+
+        boxes[i] = eb
+    end
 
     local hint = T.Text(f, 8, C.faint)
-    hint:SetPoint("TOPLEFT", boxBG, "BOTTOMLEFT", 0, -5)
+    hint:SetPoint("TOPLEFT", cells[1], "BOTTOMLEFT", 0, -5)
     hint:SetWidth(272)
     hint:SetWordWrap(false)
 
-    local HINT_DEFAULT = "1金20银5铜 / 20银 / 1.5金 / 80铜 · 只写数字按银算 · 清空则删除"
+    local HINT_DEFAULT = "三项都空 = 删除 · 银、铜超 99 自动进位 · 回车保存"
 
-    -- 边打边把「值多少金多少银多少铜」写出来: 输入框里允许简写 (120 = 1金20银),
-    -- 下面这行负责把它翻成看得懂的整钱, 免得玩家不知道自己填的到底是多少
+    -- 三个格子加起来是多少铜
+    local function Total()
+        local g = tonumber(boxes[1]:GetText() or "") or 0
+        local s = tonumber(boxes[2]:GetText() or "") or 0
+        local k = tonumber(boxes[3]:GetText() or "") or 0
+        return math.floor(g) * 10000 + math.floor(s) * 100 + math.floor(k)
+    end
+
+    local function IsEmpty()
+        for i = 1, 3 do
+            local t = boxes[i]:GetText()
+            if t and t:gsub("%s", "") ~= "" then return false end
+        end
+        return true
+    end
+
+    -- 边填边把「一共多少金多少银多少铜」写出来: 三个格子只收数字, 进位由这里负责
     local function RefreshHint()
-        local text = box:GetText() or ""
-        if text:gsub("%s", "") == "" then
+        if IsEmpty() then
             hint:SetTextColor(T.rgb(C.faint))
             hint:SetText(HINT_DEFAULT)
             return
         end
-        local copper, err = ns.NPC.ParseMoney(text)
-        if not copper then
+        local total = Total()
+        if total <= 0 then
             hint:SetTextColor(T.rgb(C.red))
-            hint:SetText("看不懂: " .. tostring(err))
+            hint:SetText("总价要大于 0")
         else
             hint:SetTextColor(T.rgb(C.gold))
-            hint:SetText("= " .. ns.NPC.MoneyEx(copper))
+            hint:SetText("= " .. ns.NPC.MoneyEx(total))
         end
+    end
+
+    -- 离开格子时把超出 99 的银/铜折上去 (填 150 银 → 1金50银0铜), 免得三格数字对不上总数
+    local function Normalize()
+        if IsEmpty() then return end
+        local total = Total()
+        if total <= 0 then return end
+        local g, s, k = ns.NPC.SplitMoney(total)
+        boxes[1]:SetText(tostring(g))
+        boxes[2]:SetText(tostring(s))
+        boxes[3]:SetText(tostring(k))
+        RefreshHint()
     end
 
     local function Save()
         local id = f.itemID
         if not id then f:Hide(); return end
-        local text = box:GetText() or ""
-        if text:gsub("%s", "") == "" then
-            ns.NPC.SetBuy(id, 0)                    -- 清空 = 删掉这条
+        if IsEmpty() then
+            ns.NPC.SetBuy(id, 0)                    -- 三个都空 = 删掉这条
             f:Hide()
             RefreshNpcFor(id)
             return
         end
-        local copper, err = ns.NPC.ParseMoney(text)
-        if not copper then
+        local total = Total()
+        if total <= 0 then
             hint:SetTextColor(T.rgb(C.red))
-            hint:SetText("看不懂: " .. tostring(err))
+            hint:SetText("总价要大于 0")
+            boxes[1]:SetFocus()
             return
         end
-        ns.NPC.SetBuy(id, copper)
+        ns.NPC.SetBuy(id, total)
         f:Hide()
         RefreshNpcFor(id)
     end
 
-    box:SetScript("OnTextChanged", RefreshHint)
-    box:SetScript("OnEnterPressed", Save)
-    box:SetScript("OnEscapePressed", function() f:Hide() end)
+    for i = 1, 3 do
+        -- Lua 5.1 的 for 变量是所有轮共用同一个 local, 直接闭包会把三格都指到最后那一格;
+        -- 每轮另存一份 idx, 闭包才是各自独立的
+        local idx = i
+        local eb = boxes[idx]
+        eb:SetScript("OnTextChanged", RefreshHint)
+        eb:SetScript("OnEditFocusLost", Normalize)
+        eb:SetScript("OnEscapePressed", function(b) b:ClearFocus(); f:Hide() end)
+        -- Tab / 回车 往后跳一格, 铜格子回车 = 保存
+        local function Next()
+            if idx < 3 then
+                local nxt = boxes[idx + 1]
+                nxt:SetFocus()
+                if nxt.HighlightText then nxt:HighlightText() end
+            else
+                Save()
+            end
+        end
+        eb:SetScript("OnTabPressed", Next)
+        eb:SetScript("OnEnterPressed", Next)
+    end
 
     local save = MakeMiniButton(f, 54, 18, "保存")
     save:SetPoint("BOTTOMRIGHT", -14, 12)
@@ -2426,7 +2484,8 @@ local function BuildNpcEditor()
     cancel:SetPoint("RIGHT", clear, "LEFT", -6, 0)
     cancel:SetScript("OnClick", function() f:Hide() end)
 
-    f.box, f.who, f.hint = box, who, hint
+    f.boxes, f.who, f.hint = boxes, who, hint
+    f.save, f.clear, f.cancel = save, clear, cancel
     f.refreshHint = RefreshHint
     f:Hide()
     editor = f
@@ -2446,20 +2505,22 @@ function ns.UI.EditNpcPrice(itemID, name, cell)
     e.who:SetText(name or ("物品 #" .. tostring(itemID)))
 
     local cur = ns.NPC and ns.NPC.Buy(itemID)
-    -- 输入框里直接写成完整的「多少金多少银多少铜」: 12金0银5铜 也把 0 写出来,
-    -- 用 AH.Money 那种简写会把铜位和 0 银吞掉, 玩家看不出记的是不是自己想的那笔
-    e.box:SetText(cur and ns.NPC.MoneyEx(cur) or "")
-    e.box:SetCursorPosition(0)
-    if e.refreshHint then e.refreshHint() else
-        e.hint:SetTextColor(T.rgb(C.faint))
-        e.hint:SetText("1金20银5铜 / 20银 / 1.5金 / 80铜 · 只写数字按银算 · 清空则删除")
-    end
+    -- 有记录就把三个格子都填上数字 (0 也填, 例如 0金20银5铜), 一眼看清记的是多少;
+    -- 没记录就三个都留空 —— 三个都空 == 没有这条价
+    local has = cur and cur > 0
+    local g, s, k = 0, 0, 0
+    if has then g, s, k = ns.NPC.SplitMoney(cur) end
+    e.boxes[1]:SetText(has and tostring(g) or "")
+    e.boxes[2]:SetText(has and tostring(s) or "")
+    e.boxes[3]:SetText(has and tostring(k) or "")
+    if e.refreshHint then e.refreshHint() end
 
     e:ClearAllPoints()
     -- 居中盖在面板上: 材料行通常贴着列表顶部, 若跟着行锚会被顶出面板外面
     e:SetPoint("CENTER", frame, "CENTER", 0, 0)
     e:Show()
-    e.box:SetFocus()
+    e.boxes[1]:SetFocus()
+    if e.boxes[1].HighlightText then e.boxes[1]:HighlightText() end
 end
 
 --------------------------------------------------------------------------- 专业图标补全

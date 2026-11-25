@@ -173,7 +173,7 @@
 
   /* ---------- 页面内浮层提示 (对应 UI.lua 的 ns.UI.Notify) ---------- */
   /* ---------- NPC 买价录入弹窗 (对应 ns.UI.EditNpcPrice) ----------
-     300x126 设计像素, 居中盖在面板上; 输入框 + 一行提示 + 三个按钮 */
+     300x126 设计像素, 居中盖在面板上; 金/银/铜 三个输入框 + 一行提示 + 三个按钮 */
   .npc-editor {
     position: absolute; left: 50%; top: 50%;
     width: 300px; height: 126px;
@@ -188,14 +188,15 @@
   .ne-title { font-size: 11px; font-weight: 600; color: var(--gold); }
   .ne-who { font-size: 9px; color: var(--muted); margin-top: 3px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .ne-box {
-    margin-top: 9px; height: 22px; border-radius: 5px;
+  .ne-row { margin-top: 9px; display: flex; gap: 2px; }
+  .ne-cell { flex: 1; display: flex; align-items: center; gap: 4px; }
+  .ne-cell b {
+    flex: 1; height: 20px; border-radius: 5px; box-sizing: border-box;
     background: rgba(255,255,255,.06); box-shadow: inset 0 0 0 1px rgba(255,255,255,.06);
-    display: flex; align-items: center; padding: 0 6px;
-    font-size: 11px; color: var(--text);
+    display: flex; align-items: center; padding: 0 5px;
+    font-size: 11px; font-weight: 400; color: var(--text);
   }
-  .ne-box i { display: inline-block; width: 1px; height: 12px; background: var(--gold);
-    margin-left: 2px; }
+  .ne-cell span { flex: 0 0 14px; font-size: 9px; color: var(--faint); }
   .ne-hint { font-size: 8px; color: var(--faint); margin-top: 5px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .ne-btns { position: absolute; right: 14px; bottom: 12px; display: flex; gap: 6px; }
@@ -402,7 +403,7 @@
 </head>
 <body>
 
-<h1><b>WOWGOLDMAKER</b> · 单页预览 (v0.8.3)</h1>
+<h1><b>WOWGOLDMAKER</b> · 单页预览 (v0.8.4)</h1>
 
 <div class="window">
   <div class="shadow"></div>
@@ -446,7 +447,11 @@
     <div class="npc-editor" id="npcEditor">
       <div class="ne-title">NPC 购买价</div>
       <div class="ne-who">空瓶</div>
-      <div class="ne-box">1金20银5铜<i></i></div>
+      <div class="ne-row">
+        <div class="ne-cell"><b>1</b><span>金</span></div>
+        <div class="ne-cell"><b>20</b><span>银</span></div>
+        <div class="ne-cell"><b>5</b><span>铜</span></div>
+      </div>
       <div class="ne-hint" style="color:var(--gold)">= 1金20银5铜</div>
       <div class="ne-btns">
         <button>取消</button><button>清除</button><button class="primary">保存</button>
@@ -466,7 +471,7 @@
 </div>
 
 <div class="settings">
-  <h2><span>金币工坊</span> v0.8.3</h2>
+  <h2><span>金币工坊</span> v0.8.4</h2>
   <div class="sub">魔兽世界无限服 · 金币工具箱</div>
   <hr>
   <div class="row" id="row1"><div class="box"><span class="check">✓</span></div><span class="lbl">登录后自动呼出主界面</span></div>
@@ -948,27 +953,32 @@
   };
 
   /* 点材料行的「买价」格子 → 弹出录入框 (对应 ns.UI.EditNpcPrice) */
-  /* 输入框里写成完整的「多少金多少银多少铜」, 对应游戏里的 ns.NPC.MoneyEx */
-  function moneyFull(s) {
+  /* 金/银/铜 各一个格子, 下面那行把三段写成整钱 (对应游戏里的 ns.NPC.MoneyEx) */
+  function splitMoney(s) {
     const g = /(\d+)金/.exec(s), si = /(\d+)银/.exec(s), c = /(\d+)铜/.exec(s);
-    const G = g ? +g[1] : 0, S = si ? +si[1] : 0, C = c ? +c[1] : 0;
-    if (G > 0) return `${G}金${S}银${C}铜`;
-    if (S > 0) return `${S}银${C}铜`;
-    return `${C}铜`;
+    return [+(g ? g[1] : 0), +(si ? si[1] : 0), +(c ? c[1] : 0)];
+  }
+  function moneyFull(g, s, c) {
+    if (g > 0) return `${g}金${s}银${c}铜`;
+    if (s > 0) return `${s}银${c}铜`;
+    return `${c}铜`;
   }
   const $npcEditor = document.getElementById("npcEditor");
+  function setEditorMoney(g, s, c) {
+    const vals = [g, s, c];
+    $npcEditor.querySelectorAll(".ne-cell b").forEach((el, i) => { el.textContent = vals[i]; });
+    const hint = $npcEditor.querySelector(".ne-hint");
+    hint.textContent = "= " + moneyFull(g, s, c);
+    hint.style.color = "var(--gold)";
+  }
   $list.addEventListener("click", e => {
     const mb = e.target.closest && e.target.closest(".mbuy");
     if (!mb) return;
     e.stopPropagation();
     const row = mb.closest(".mline");
     $npcEditor.querySelector(".ne-who").textContent = row ? row.dataset.n : "";
-    const raw = mb.classList.contains("empty") ? "1银" : mb.textContent.replace(/^\s*买\s*/, "");
-    const cur = moneyFull(raw);
-    $npcEditor.querySelector(".ne-box").innerHTML = cur + "<i></i>";
-    const hint = $npcEditor.querySelector(".ne-hint");
-    hint.textContent = "= " + cur;
-    hint.style.color = "var(--gold)";
+    const raw = mb.classList.contains("empty") ? "1银20铜" : mb.textContent.replace(/^\s*买\s*/, "");
+    setEditorMoney(...splitMoney(raw));
     $npcEditor.classList.add("on");
   });
   $npcEditor.querySelectorAll(".ne-btns button").forEach(b => {
