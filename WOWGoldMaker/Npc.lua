@@ -9,9 +9,11 @@
 --     (sellPrice, 就是物品提示里那行「售价」)。同客户端的 EllesmereUI 背包
 --     「商人出售价格」用的也是这条。
 --
---   Buy (从商人买) —— 客户端没有这个接口: 只有商人窗口打开时才能用
---     C_MerchantFrame.GetItemInfo(index).price 逐项读到, 面板里根本没这个机会。
---     所以改成玩家手动录入一个单价, 存进 SavedVariables, 下次打开自动显示。
+--   Buy (从商人买) —— 客户端没有「查 NPC 卖价」的离线接口: 只有商人窗口打开时
+--     才能用 C_MerchantFrame.GetItemInfo(index).price 逐项读到。所以做成三级:
+--       1. 玩家手动录入 (db.npcBuy) —— 最可信, 玩家自己确认过
+--       2. 打开商人时自动录 (db.vendorSeen, 见 Vendor.lua) —— 货架真价
+--       3. VendorData.lua 的离线价目表 —— 没逛过商人时也能算成本
 ---------------------------------------------------------------------------
 
 local ADDON, ns = ...
@@ -200,11 +202,47 @@ local function BuyTable(create)
     return db.npcBuy
 end
 
-function NPC.Buy(id)
+-- 买价有三个来源, 按可信度排:
+--   manual = 玩家自己录的 (db.npcBuy)
+--   vendor = 打开商人时从货架上实测的 (db.vendorSeen) —— 服务器真价
+--   table  = VendorData.lua 的离线价目表 —— 没逛过商人时的兜底
+-- 返回 price, source; 老调用点只取第一个返回值, 不受影响。
+function NPC.BuyWithSource(id)
+    if type(id) ~= "number" or id <= 0 then return nil, nil end
+
     local t = BuyTable(false)
-    if not t or type(id) ~= "number" then return nil end
-    local v = t[id]
-    if Num(v) and v > 0 then return math.floor(v) end
+    if t then
+        local v = t[id]
+        if Num(v) and v > 0 then return math.floor(v), "manual" end
+    end
+
+    local db = ns.DB and ns.DB()
+    local seen = db and db.vendorSeen
+    if type(seen) == "table" then
+        local v = seen[id]
+        if Num(v) and v > 0 then return math.floor(v), "vendor" end
+    end
+
+    local vp = ns.VendorPrice
+    if type(vp) == "table" then
+        local v = vp[id]
+        if Num(v) and v > 0 then return math.floor(v), "table" end
+    end
+
+    return nil, nil
+end
+
+function NPC.Buy(id)
+    local price = NPC.BuyWithSource(id)
+    return price
+end
+
+-- 有几个商人卖这件 (离线表里的数量, 拿不到就是 nil)
+function NPC.VendorCount(id)
+    local vp = ns.VendorNPCs
+    if type(vp) ~= "table" or type(id) ~= "number" then return nil end
+    local n = vp[id]
+    if Num(n) and n > 0 then return math.floor(n) end
     return nil
 end
 

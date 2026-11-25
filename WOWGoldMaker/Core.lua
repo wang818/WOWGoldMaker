@@ -38,6 +38,7 @@ local DEFAULTS = {
     strata     = "DIALOG",                                -- 主面板层级 (DIALOG = 压在 EllesmereUI 上层)
     prices     = {},                                      -- 拍卖行价格缓存: itemID -> { unit, n, ts }
     npcBuy     = {},                                      -- NPC 购买价 (手动录入): itemID -> 铜
+    vendorSeen = {},                                      -- 商人货架上实测到的价: itemID -> 铜
     tipExtra   = false,                                   -- 悬停是否附带配方/单价/盈亏 (默认只显示物品原来的介绍)
 }
 
@@ -100,6 +101,8 @@ ev:RegisterEvent("AUCTION_HOUSE_SHOW")
 -- AUCTION_HOUSE_CLOSED 在部分客户端不叫这个名字, 注册不上就算了:
 -- 收不起来顶多是面板留在原地, 不影响查价
 pcall(function() ev:RegisterEvent("AUCTION_HOUSE_CLOSED") end)
+-- 商人货架: 打开商人时记一遍价 (拿 NPC 卖价的唯一实时来源)
+pcall(function() ev:RegisterEvent("MERCHANT_SHOW") end)
 
 -- 拍卖行开关时面板的显隐。
 -- 开: 把面板叫出来 (查价、算利润都要用它, 每次手打 /wgm 太啰嗦; 设置里可以关掉);
@@ -128,6 +131,23 @@ local function OnAuctionHouseEvent(event)
     if not ahAuto then return end
     ahAuto = false
     if ns.UI and ns.UI.Hide then ns.UI.Hide() end
+end
+
+-- 商人货架扫描: 打开商人是唯一能拿到「NPC 卖多少钱」的时机。
+-- MERCHANT_SHOW 触发时货架偶尔还没填好, 所以再补一次延迟扫描 (重复扫是幂等的)。
+local function ScanVendor()
+    if not (ns.Vendor and ns.Vendor.Scan) then return end
+    local ok, n = pcall(ns.Vendor.Scan)
+    if ok and type(n) == "number" and n > 0 then
+        if ns.UI and ns.UI.RefreshNpcAll then ns.UI.RefreshNpcAll() end
+    end
+end
+
+local function OnMerchantShow()
+    ScanVendor()
+    if C_Timer and C_Timer.After then
+        C_Timer.After(0.6, ScanVendor)
+    end
 end
 
 ev:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
@@ -167,6 +187,9 @@ ev:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
 
     elseif event == "AUCTION_HOUSE_SHOW" or event == "AUCTION_HOUSE_CLOSED" then
         OnAuctionHouseEvent(event)
+
+    elseif event == "MERCHANT_SHOW" then
+        OnMerchantShow()
     end
 end)
 
@@ -270,6 +293,24 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
         end
     elseif msg == "ah clear" or msg == "查价 清空" then
         if ns.Auction then ns.Auction.Clear() end
+    elseif msg == "vendor" or msg == "商人" then
+        if ns.Vendor and ns.Vendor.Report then
+            ns.Vendor.Report()
+        else
+            ns.Print("|cffff5555商人模块未加载|r (检查 Vendor.lua 是否在 .toc 里)")
+        end
+    elseif msg == "vendor scan" or msg == "商人 扫描" then
+        if ns.Vendor and ns.Vendor.Scan then
+            local n = ns.Vendor.Scan()
+            ns.Print(format("这次从商人货架上记下 %d 条价。", n))
+            if n > 0 and ns.UI and ns.UI.RefreshNpcAll then ns.UI.RefreshNpcAll() end
+        end
+    elseif msg == "vendor clear" or msg == "商人 清空" then
+        if ns.Vendor and ns.Vendor.ClearSeen then
+            local n = ns.Vendor.ClearSeen()
+            ns.Print(format("清掉 %d 条货架实测价, 退回离线价目表。", n))
+            if ns.UI and ns.UI.RefreshNpcAll then ns.UI.RefreshNpcAll() end
+        end
     elseif msg:match("^search") or msg:match("^搜索") then
         -- 手动试一下「在拍卖行里搜索某件物品」, 不用去列表里点
         local id = tonumber(msg:match("(%d+)") or "")

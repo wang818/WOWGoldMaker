@@ -1584,6 +1584,24 @@ local function RefreshNpcFor(itemID)
     end
 end
 
+-- 全量重画当前显示行的 NPC 价格 (商人货架扫完 / 清掉实测价后调用)。
+-- 和 RefreshNpcFor 一样不动滚动位置, 只换文字。
+function ns.UI.RefreshNpcAll()
+    for i = 1, #rows do
+        local r = rows[i]
+        if r:IsShown() then
+            if r.itemID then
+                SetRowNpc(r, r.itemID)
+                if r.matsMode then SetRowMatsBuy(r, r.itemID) end
+            end
+            for k = 1, (r.cellCount or 0) do
+                local c = r.cells[k]
+                if c.itemID then SetCellNpc(c, c.itemID) end
+            end
+        end
+    end
+end
+
 RenderList = function()
     if not listContent or not scroll then return end
     if not (ns.Prof and ns.Prof.byKey and ns.Prof.byKey[curKey]) then return end
@@ -2091,17 +2109,20 @@ function ns.UI.ShowRowTooltip(anchor, r)
         end
         if ns.NPC then
             local npcSell = ns.NPC.Sell(r.itemID)
-            local npcBuy  = ns.NPC.Buy(r.itemID)
+            local npcBuy, buySrc = ns.NPC.BuyWithSource(r.itemID)
             local cnt = r.matCount or 1
             if npcSell then
                 GameTooltip:AddLine(format("卖商人 %s/个 · %d 个共 %s",
                     ns.NPC.Money(npcSell), cnt, ns.NPC.Money(npcSell * cnt)), 0.82, 0.84, 0.88)
             end
-            -- 买价是玩家自己记的: 汇总模式下顺手把「一共要多少」也算出来, 才能和上面
-            -- 拍卖行的合计直接比
+            -- 买价有三个来源 (自己录 / 货架实测 / 离线价目表), 提示里把来源写出来,
+            -- 免得把「价目表上的旧价」当成自己确认过的价
             if npcBuy then
-                GameTooltip:AddLine(format("从商人买 %s/个 · %d 个共 %s",
-                    ns.NPC.MoneyEx(npcBuy), cnt, ns.NPC.MoneyEx(npcBuy * cnt)), 0.29, 0.78, 0.66)
+                local tag = ""
+                if buySrc == "vendor" then tag = " (货架实测)"
+                elseif buySrc == "table" then tag = " (价目表)" end
+                GameTooltip:AddLine(format("从商人买 %s/个 · %d 个共 %s%s",
+                    ns.NPC.MoneyEx(npcBuy), cnt, ns.NPC.MoneyEx(npcBuy * cnt), tag), 0.29, 0.78, 0.66)
                 if e and e.unit then
                     -- 差多少写到铜位: 简写会把「2银64铜」显示成「2银」, 看着像没差多少
                     local ahTotal, npcTotal = e.unit * cnt, npcBuy * cnt

@@ -417,7 +417,7 @@
 </head>
 <body>
 
-<h1><b>WOWGOLDMAKER</b> · 单页预览 (v0.8.7)</h1>
+<h1><b>WOWGOLDMAKER</b> · 单页预览 (v0.9.0)</h1>
 
 <div class="window">
   <div class="shadow"></div>
@@ -485,7 +485,7 @@
 </div>
 
 <div class="settings">
-  <h2><span>金币工坊</span> v0.8.7</h2>
+  <h2><span>金币工坊</span> v0.9.0</h2>
   <div class="sub">魔兽世界无限服 · 金币工具箱</div>
   <hr>
   <div class="row" id="row1"><div class="box"><span class="check">✓</span></div><span class="lbl">登录后自动呼出主界面</span></div>
@@ -971,7 +971,8 @@
     const sell = npcSellOf(name), buy = npcBuyOf(name);
     lines.push(`卖商人 ${money(sell)}/个 · ${cnt} 个共 ${money(sell * cnt)}`);
     if (buy) {
-      lines.push(`从商人买 ${moneyEx(buy)}/个 · ${cnt} 个共 ${moneyEx(buy * cnt)} (自己记的价)`);
+      /* 买价来源: 游戏里会标 (货架实测) / (价目表) / 不标=自己录的 */
+      lines.push(`从商人买 ${moneyEx(buy)}/个 · ${cnt} 个共 ${moneyEx(buy * cnt)}`);
       if (unit > 0) {
         /* 差多少精确到铜 —— 简写会把 2银64铜 写成 2银, 看着像没差多少 */
         if (buy * cnt < unit * cnt) lines.push(`买商人省 ${moneyEx(unit * cnt - buy * cnt)}`);
