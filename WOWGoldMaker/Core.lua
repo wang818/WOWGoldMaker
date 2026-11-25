@@ -39,6 +39,7 @@ local DEFAULTS = {
     prices     = {},                                      -- 拍卖行价格缓存: itemID -> { unit, n, ts }
     npcBuy     = {},                                      -- NPC 购买价 (手动录入): itemID -> 铜
     vendorSeen = {},                                      -- 商人货架上实测到的价: itemID -> 铜
+    favItems   = {},                                      -- 我的收藏: itemID -> 收藏时间 (os.time)
     tipExtra   = false,                                   -- 悬停是否附带配方/单价/盈亏 (默认只显示物品原来的介绍)
 }
 
@@ -302,6 +303,20 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
         else
             ns.Print("|cffff5555商人货架未加载|r (检查 MerchantUI.lua 是否在 .toc 里)")
         end
+    elseif msg == "收藏" or msg == "我的收藏" or msg == "fav" or msg == "favorites" then
+        -- 我的收藏 = 货架窗口的第二个页面, 直接打开
+        if ns.MerchantUI and ns.MerchantUI.ShowFav then
+            ns.MerchantUI.ShowFav()
+        else
+            ns.Print("|cffff5555收藏页未加载|r (检查 MerchantUI.lua 是否在 .toc 里)")
+        end
+    elseif msg:match("^收藏%s+(.+)$") or msg:match("^我的收藏%s+(.+)$") then
+        local kw = msg:match("^收藏%s+(.+)$") or msg:match("^我的收藏%s+(.+)$")
+        if ns.MerchantUI and ns.MerchantUI.ShowFav then
+            ns.MerchantUI.ShowFav(kw)
+        else
+            ns.Print("|cffff5555收藏页未加载|r")
+        end
     elseif msg:match("^货架 ") or msg:match("^商人 ") or msg:match("^vendor ") then
         local kw = msg:match("^货架 (.+)$") or msg:match("^商人 (.+)$") or msg:match("^vendor (.+)$")
         if kw == "scan" or kw == "扫描" then
@@ -405,6 +420,8 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
         print("  |cffe8c25a/wgm npc clear|r  清空手动录入的 NPC 购买价")
         print("  |cffe8c25a/wgm 商人|r       打开商人货架 (浏览所有商人的货, 反查谁卖)")
         print("  |cffe8c25a/wgm 货架 <词>|r  打开商人货架并搜索 (物品名或商人名)")
+        print("  |cffe8c25a/wgm 收藏|r       打开「我的收藏」(货架行首点 ★ 收进来)")
+        print("  |cffe8c25a/wgm 收藏 <词>|r  在我的收藏里搜索")
         print("  |cffe8c25a/wgm vendor report|r 商人价目表 / 当前货架报告")
         print("  |cffe8c25a/wgm stock|r      商人货架 (同 /wgm 商人)")
         print("  |cffe8c25a/wgm tip <ID>|r   诊断物品提示 (为什么只有名字 / 没有描述)")

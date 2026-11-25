@@ -93,15 +93,30 @@ function ns.BuildSettings()
         if SettingsPanel and HideUIPanel then
             pcall(HideUIPanel, SettingsPanel)
         end
-        if ns.MerchantUI and ns.MerchantUI.Show then ns.MerchantUI.Show() end
+        if ns.MerchantUI and ns.MerchantUI.Show then ns.MerchantUI.Show("shop") end
+    end)
+
+    local fav = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    fav:SetSize(140, 24)
+    fav:SetPoint("TOPLEFT", 20, -224)
+    fav:SetText("我的收藏")
+    fav:SetScript("OnClick", function()
+        if SettingsPanel and HideUIPanel then
+            pcall(HideUIPanel, SettingsPanel)
+        end
+        if ns.MerchantUI and ns.MerchantUI.ShowFav then
+            ns.MerchantUI.ShowFav()
+        elseif ns.MerchantUI and ns.MerchantUI.Show then
+            ns.MerchantUI.Show("fav")
+        end
     end)
 
     -- 命令说明
     local help = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-    help:SetPoint("TOPLEFT", 20, -240)
+    help:SetPoint("TOPLEFT", 20, -264)
     help:SetJustifyH("LEFT")
     help:SetTextColor(T.rgb(C.muted))
-    help:SetText("|cffe8c25a/wgm|r        开关主界面\n|cffe8c25a/wgm reset|r  重置位置\n|cffe8c25a/wgm 商人|r   打开商人货架\n|cffe8c25a/wgm config|r 打开本设置页")
+    help:SetText("|cffe8c25a/wgm|r        开关主界面\n|cffe8c25a/wgm reset|r  重置位置\n|cffe8c25a/wgm 商人|r   打开商人货架\n|cffe8c25a/wgm 收藏|r   打开我的收藏\n|cffe8c25a/wgm config|r 打开本设置页")
 
     local ok, cat = pcall(Settings.RegisterCanvasLayoutCategory, panel, "金币工坊")
     if ok and cat then

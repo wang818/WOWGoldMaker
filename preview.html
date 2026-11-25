@@ -424,7 +424,19 @@
 
   .shop-content { width: 440px; height: 500px; }
   .shop-title { position: absolute; left: 20px; top: 4px; font-size: 13px; font-weight: 700; color: var(--gold); }
-  .shop-count { position: absolute; left: 92px; top: 8px; font-size: 9px; color: var(--muted); white-space: nowrap; }
+
+  /* 两个页签 = 两个页面: 全部货架 / 我的收藏 (对应 MerchantUI.lua 的 shopTab / favTab) */
+  .shop-tabs { position: absolute; left: 76px; top: 2px; display: flex; gap: 4px; }
+  .shop-tab {
+    height: 18px; padding: 0 8px; border: none; border-radius: 5px; cursor: pointer;
+    background: rgba(255,255,255,.10); color: var(--muted);
+    font-size: 10px; font-weight: 700; font-family: inherit; white-space: nowrap;
+    transition: background .15s, color .15s;
+  }
+  .shop-tab:hover { background: rgba(255,255,255,.20); color: var(--text); }
+  .shop-tab.on { background: rgba(232,194,90,.85); color: var(--ink); }
+
+  .shop-count { position: absolute; right: 46px; top: 8px; font-size: 9px; color: var(--muted); white-space: nowrap; }
   .shop-close { position: absolute; right: 14px; top: 0; }
 
   .shop-search {
@@ -462,7 +474,13 @@
   }
   .srow:hover { background: rgba(255,255,255,.06); }
   .srow.open { background: rgba(255,255,255,.05); }
-  .srow .caret { flex: 0 0 12px; margin-left: 4px; text-align: center; font-size: 9px; color: var(--muted); }
+  .srow .star {
+    flex: 0 0 14px; width: 14px; text-align: center; font-size: 11px; line-height: 1;
+    color: var(--muted); cursor: pointer; transition: color .12s;
+  }
+  .srow .star.on { color: var(--gold); }
+  .srow .star:hover { color: var(--gold); }
+  .srow .caret { flex: 0 0 11px; margin-left: 2px; text-align: center; font-size: 9px; color: var(--muted); }
   .srow .sicon {
     flex: 0 0 14px; width: 14px; height: 14px; border-radius: 3px; margin: 0 4px 0 0;
     display: flex; align-items: center; justify-content: center;
@@ -477,10 +495,10 @@
 
   .subrow {
     height: 17px; display: flex; align-items: center; cursor: pointer; position: relative;
-    padding-left: 34px;
+    padding-left: 45px;
   }
   .subrow:hover { background: rgba(255,255,255,.05); }
-  .subrow::before { content: ""; position: absolute; left: 18px; top: 0; bottom: 0; width: 1px; background: rgba(255,255,255,.10); }
+  .subrow::before { content: ""; position: absolute; left: 20px; top: 0; bottom: 0; width: 1px; background: rgba(255,255,255,.10); }
   .subname { flex: 0 0 150px; width: 150px; font-size: 9px; color: var(--text);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .subzone { flex: 1 1 auto; min-width: 0; margin-left: 8px; font-size: 9px; color: var(--muted);
@@ -536,7 +554,7 @@
 </head>
 <body>
 
-<h1><b>WOWGOLDMAKER</b> · 单页预览 (v0.10.2)</h1>
+<h1><b>WOWGOLDMAKER</b> · 单页预览 (v0.11.0)</h1>
 
 <div class="window">
   <div class="shadow"></div>
@@ -604,16 +622,20 @@
 
   <div class="content shop-content" id="shopContent">
     <div class="shop-title">商人货架</div>
+    <div class="shop-tabs">
+      <button class="shop-tab on" data-page="shop">货架</button>
+      <button class="shop-tab" data-page="fav" id="favTab">收藏 0</button>
+    </div>
     <div class="shop-count" id="shopCount">985 种货 · 829 位商人 · 10903 条货架</div>
     <button class="close shop-close" title="关闭"><i class="x x1"></i><i class="x x2"></i></button>
 
-    <input class="shop-search" id="shopSearch" placeholder="搜索物品 / 商人 (中英文都行)" autocomplete="off">
+    <input class="shop-search" id="shopSearch" placeholder="搜索物品 / 商人" autocomplete="off">
     <button class="chip" id="sortChip">买价 ↓</button>
     <button class="chip" id="filterChip">全部</button>
 
     <div class="shop-list" id="shopList"></div>
 
-    <div class="shop-foot">左键点物品展开商人 · 左键点商人设路径点 · 右键物品在拍卖行搜索</div>
+    <div class="shop-foot">★ 收藏 · 左键物品展开商人 · 左键商人设路径点 · 右键物品在拍卖行搜索</div>
     <div class="shop-toast" id="shopToast"><span id="shopToastText"></span></div>
   </div>
 </div>
@@ -635,7 +657,7 @@
 </div>
 
 <div class="settings">
-  <h2><span>金币工坊</span> v0.10.2</h2>
+  <h2><span>金币工坊</span> v0.11.0</h2>
   <div class="sub">魔兽世界无限服 · 金币工具箱</div>
   <hr>
   <div class="row" id="row1"><div class="box"><span class="check">✓</span></div><span class="lbl">登录后自动呼出主界面</span></div>
@@ -646,8 +668,11 @@
     <button class="gbtn">打开主界面</button>
     <button class="gbtn" id="settingsShop">打开商人货架</button>
   </div>
+  <div class="btnrow">
+    <button class="gbtn" id="settingsFav">我的收藏</button>
+  </div>
   <div class="help">
-    <b>/wgm</b> 开关主界面 &nbsp;·&nbsp; <b>/wgm 商人</b> 打开商人货架 &nbsp;·&nbsp; <b>/wgm reset</b> 重置位置 &nbsp;·&nbsp; <b>/wgm config</b> 打开本设置页
+    <b>/wgm</b> 开关主界面 &nbsp;·&nbsp; <b>/wgm 商人</b> 打开商人货架 &nbsp;·&nbsp; <b>/wgm 收藏</b> 打开我的收藏 &nbsp;·&nbsp; <b>/wgm reset</b> 重置位置 &nbsp;·&nbsp; <b>/wgm config</b> 打开本设置页
   </div>
 </div>
 
@@ -3212,6 +3237,8 @@ const SHOP_GOODS = [
   const $filter = document.getElementById("filterChip");
   const $toast = document.getElementById("shopToast");
   const $toastText = document.getElementById("shopToastText");
+  const $favTab = document.getElementById("favTab");
+  const $tabs = Array.from(document.querySelectorAll(".shop-tab"));
 
   const BASE_W = 440, BASE_H = 500, PAD = 24, SCALE_MAX = 2.6;
 
@@ -3267,7 +3294,25 @@ const SHOP_GOODS = [
   const expanded = new Set();
   let view = [];
 
-  const SORTS = [["price", "买价 ↓"], ["name", "名字"], ["npcs", "商人 ↓"]];
+  /* ---------- 收藏 (对应 db.favItems) ----------
+     favOrder 按「最近收藏在前」排, 收藏页默认就按这个顺序看 */
+  let page = "shop";                       // "shop" = 全部货架, "fav" = 我的收藏
+  let favOrder = [];
+  const FAV = new Set();
+  function setFav(id, on) {
+    if (on && !FAV.has(id)) { FAV.add(id); favOrder.unshift(id); }
+    else if (!on && FAV.has(id)) { FAV.delete(id); favOrder = favOrder.filter((x) => x !== id); }
+    $favTab.textContent = "收藏 " + FAV.size;
+  }
+
+  const SORTS = [
+    { key: "price", label: "买价 ↓" },
+    { key: "name", label: "名字" },
+    { key: "npcs", label: "商人 ↓" },
+    { key: "fav", label: "最近收藏", favOnly: true },
+  ];
+  /* 「最近收藏」只在收藏页有意义, 货架页循环排序时跳过 */
+  const sortModes = () => SORTS.filter((s) => !s.favOnly || page === "fav");
 
   function apply() {
     if (inputTimer) { clearTimeout(inputTimer); inputTimer = null; }
@@ -3280,7 +3325,12 @@ const SHOP_GOODS = [
       }
     }
 
-    view = ALL.filter((g) => {
+    /* 收藏页只在收藏里筛: 搜商人名时「该商人的货」也被这条 base 限制住 */
+    const base = page === "fav"
+      ? favOrder.map((id) => ALL.find((g) => g.id === id)).filter(Boolean)
+      : ALL;
+
+    view = base.filter((g) => {
       if (onlyMats && !g.mat) return false;
       if (!q) return true;
       // 中文名和英文快照名都试 (和游戏里 MerchantUI.Filter 一致)
@@ -3290,7 +3340,10 @@ const SHOP_GOODS = [
       return false;
     });
 
-    if (sortMode === "price") view.sort((a, b) => b.price - a.price || a.id - b.id);
+    if (sortMode === "fav") {
+      const rank = new Map(favOrder.map((id, i) => [id, i]));
+      view.sort((a, b) => (rank.get(a.id) ?? 999) - (rank.get(b.id) ?? 999));
+    } else if (sortMode === "price") view.sort((a, b) => b.price - a.price || a.id - b.id);
     else if (sortMode === "npcs") view.sort((a, b) => b.npcs.length - a.npcs.length || a.id - b.id);
     else view.sort((a, b) => dispName(a).localeCompare(dispName(b), "zh-Hans-CN"));
 
@@ -3311,12 +3364,19 @@ const SHOP_GOODS = [
   function emptyHTML() {
     const q = query.trim();
     const zh = /[\u4e00-\u9fff]/.test(q);
-    const title = q ? "没找到「" + esc(q) + "」" : "这里没有货";
-    const sub = q
-      ? (zh ? "换个说法试试, 或者输入商人名" : "换个关键词, 或直接输入商人名")
-      : "点上面的「全部」切回全部货";
+    let icon = "?", title, sub;
+    if (page === "fav") {
+      icon = "☆";
+      title = q ? "收藏里没有「" + esc(q) + "」" : "还没有收藏";
+      sub = q ? "清空搜索看看全部收藏" : "在货架上点每行开头的 ☆ 收进来";
+    } else {
+      title = q ? "没找到「" + esc(q) + "」" : "这里没有货";
+      sub = q
+        ? (zh ? "换个说法试试, 或者输入商人名" : "换个关键词, 或直接输入商人名")
+        : "点上面的「全部」切回全部货";
+    }
     return '<div class="shop-empty">' +
-      '<div class="se-icon">?</div>' +
+      '<div class="se-icon">' + icon + "</div>" +
       '<div class="se-title">' + title + "</div>" +
       '<div class="se-sub">' + sub + "</div>" +
       (q ? '<button class="se-clear" data-act="clear">清空搜索</button>' : "") +
@@ -3334,6 +3394,9 @@ const SHOP_GOODS = [
       const open = expanded.has(it.id);
       html.push(
         '<div class="srow' + (open ? " open" : "") + '" data-id="' + it.id + '">' +
+        '<span class="star' + (FAV.has(it.id) ? " on" : "") + '" data-star="' + it.id + '"' +
+        ' title="' + (FAV.has(it.id) ? "取消收藏" : "加入收藏") + '">' +
+        (FAV.has(it.id) ? "★" : "☆") + "</span>" +
         '<span class="caret">' + (it.npcs.length ? (open ? "-" : "+") : "") + "</span>" +
         '<span class="sicon" style="' + iconStyle(it.id) + '">' + esc(dispName(it).slice(0, 1)) + "</span>" +
         '<span class="sname">' + esc(dispName(it)) + "</span>" +
@@ -3356,9 +3419,16 @@ const SHOP_GOODS = [
       }
     }
     $list.innerHTML = html.length ? html.join("") : emptyHTML();
-    $count.textContent = view.length === ALL.length
-      ? SCALE
-      : "筛出 " + view.length + " 种货 / 共 " + N_GOODS;
+    if (page === "fav") {
+      const total = favOrder.length;
+      $count.textContent = total === 0
+        ? "一件都没收"
+        : (view.length === total ? total + " 件收藏" : "筛出 " + view.length + " / " + total + " 件收藏");
+    } else {
+      $count.textContent = view.length === N_GOODS
+        ? SCALE
+        : "筛出 " + view.length + " 种货 / 共 " + N_GOODS;
+    }
   }
 
   let toastTimer = null;
@@ -3382,6 +3452,17 @@ const SHOP_GOODS = [
     if (it) toast("右键 = 在拍卖行搜索「" + dispName(it) + "」");
   });
   $list.addEventListener("click", (e) => {
+    // 星标: 收藏 / 取消收藏 (自己处理, 不冒泡成「展开这一行」)
+    const star = e.target.closest("[data-star]");
+    if (star) {
+      const id = +star.dataset.star;
+      const it = view.find((v) => v.id === id);
+      const on = !FAV.has(id);
+      setFav(id, on);
+      toast((on ? "★ 已收藏: " : "已取消收藏: ") + (it ? dispName(it) : "#" + id));
+      apply();     // 收藏页取消 -> 这一行消失; 货架页 -> 星标重画
+      return;
+    }
     const sub = e.target.closest(".subrow");
     if (sub) {
       const n = npcInfo(+sub.dataset.npc);
@@ -3410,10 +3491,11 @@ const SHOP_GOODS = [
   $search.addEventListener("keydown", (e) => { if (e.key === "Escape") { $search.value = ""; query = ""; apply(); $search.blur(); } });
 
   $sort.addEventListener("click", () => {
-    let i = SORTS.findIndex((s) => s[0] === sortMode);
-    i = (i + 1) % SORTS.length;
-    sortMode = SORTS[i][0];
-    $sort.textContent = SORTS[i][1];
+    const modes = sortModes();
+    let i = modes.findIndex((s) => s.key === sortMode);
+    i = (i + 1) % modes.length;
+    sortMode = modes[i].key;
+    $sort.textContent = modes[i].label;
     apply();
   });
   $filter.addEventListener("click", () => {
@@ -3422,6 +3504,19 @@ const SHOP_GOODS = [
     $filter.classList.toggle("on", onlyMats);
     apply();
   });
+
+  /* ---------- 页签: 全部货架 / 我的收藏 ---------- */
+  function setPage(p) {
+    page = p === "fav" ? "fav" : "shop";
+    if (page !== "fav" && sortMode === "fav") sortMode = "price";
+    $sort.textContent = SORTS.find((x) => x.key === sortMode).label;
+    for (const b of $tabs) b.classList.toggle("on", b.dataset.page === page);
+    if ($search.value) { $search.value = ""; query = ""; }   // 换页不带搜索词
+    apply();
+  }
+  for (const b of $tabs) {
+    b.addEventListener("click", () => setPage(b.dataset.page));
+  }
 
   /* ---------- 视图切换 (主界面 / 商人货架) ---------- */
   function setMode(mode) {
@@ -3441,9 +3536,16 @@ const SHOP_GOODS = [
 
   document.getElementById("vendorBtn").addEventListener("click", () => setMode("shop"));
   document.getElementById("settingsShop").addEventListener("click", () => setMode("shop"));
+  document.getElementById("settingsFav").addEventListener("click", () => { setMode("shop"); setPage("fav"); });
 
   /* 截图/演示用: preview.html?view=shop 直接停在商人货架 */
   const qs = new URLSearchParams(location.search);
+
+  /* 预置几件收藏, 让「我的收藏」页一打开就有东西看 (游戏里由玩家自己点 ★) */
+  for (const n of ["粗线", "甜香料", "轻型箭袋"]) {
+    const g = ALL.find((x) => (x.zh || "").includes(n));
+    if (g && !FAV.has(g.id)) setFav(g.id, true);
+  }
   apply();
   if (qs.get("view") === "shop") setMode("shop");
 
@@ -3452,6 +3554,8 @@ const SHOP_GOODS = [
     view.slice(0, 3).forEach((it) => expanded.add(it.id));
     paint();
   }
+  /* 截图用: ?view=shop&tab=fav 直接停在「我的收藏」 */
+  if (qs.get("view") === "shop" && qs.get("tab") === "fav") setPage("fav");
   /* 截图用: ?view=shop&mats=1 打开「只看材料」 */
   if (qs.get("view") === "shop" && qs.get("mats") === "1") {
     $filter.click();

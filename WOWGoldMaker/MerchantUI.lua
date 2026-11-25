@@ -60,15 +60,17 @@ local frame, content, contentW
 local scroll, listContent, track, thumb, sbar
 local searchEdit, searchHint, clearBtn
 local sortBtn, filterBtn, countText, emptyText
+local shopTab, favTab
 local itemPool, npcPool = {}, {}
 local itemUsed, npcUsed = 0, 0
 
 local view = { entries = {}, off = {}, n = 0, height = 0 }   -- 当前渲染用的扁平行表
 local filtered = {}          -- 当前筛选结果 (物品记录数组)
 local expanded = {}          -- itemID -> true (展开了商人子行)
+local page = "shop"          -- "shop" = 全部货架, "fav" = 我的收藏
 
 -- 前向声明 (下面几处互相引用)
-local Render, UpdateThumb, RefreshCount, ApplyQuery
+local Render, UpdateThumb, RefreshCount, ApplyQuery, SetPage, PaintTabs, PaintStar
 
 --------------------------------------------------------------------------- 数据: 名字 / 区域
 
@@ -177,6 +179,10 @@ local function ItemName(rec, allowRequest)
 end
 M.ItemName = function(rec) return ItemName(rec, true) end
 
+-- 已经知道的名字, 不向客户端发查询 (提示框 / 右键搜拍卖行 / 收藏回执用)。
+-- 早先这两个地方直接调了一个不存在的全局 KnownName, 物品名还没回包时点右键会报错。
+local function KnownName(rec) return ItemName(rec, false) end
+
 -- 搜索要比三串名字: 客户端回包的本地化名、内置中文名、快照英文名。
 -- 只比其中一个的话, 中文客户端搜英文搜不到、搜中文又搜不到英文, 两边都得试。
 local function NameHas(rec, q)
@@ -267,12 +273,72 @@ function M.Index()
     return idx
 end
 
+--------------------------------------------------------------------------- 数据: 收藏
+
+-- 收藏 = 货架上的「想要清单」。存 itemID -> 收藏时间 (os.time), 按时间倒序就能
+-- 让最近收的排在最前面; 用 true/false 存的话「我的收藏」页只能按买价排。
+local function FavStore()
+    local db = ns.DB and ns.DB()
+    if not db then return nil end
+    db.favItems = db.favItems or {}
+    return db.favItems
+end
+
+local function Stamp()
+    if os and os.time then return os.time() end
+    return math.floor(GetTime() or 0)
+end
+
+function M.IsFav(id)
+    local t = FavStore()
+    return (t and t[id] ~= nil) and true or false
+end
+
+-- 返回收藏后的状态 (true = 现在已收藏)
+function M.ToggleFav(id)
+    local t = FavStore()
+    if not t or not id then return false end
+    if t[id] then
+        t[id] = nil
+        return false
+    end
+    t[id] = Stamp()
+    return true
+end
+
+function M.FavCount()
+    local t = FavStore()
+    local n = 0
+    if t then for _ in pairs(t) do n = n + 1 end end
+    return n
+end
+
+-- 收藏记录: 按收藏时间倒序。收藏了但快照里已经没有的 id 直接跳过 (数据换版时不至于崩)。
+function M.FavRecords()
+    local d = M.Index()
+    local t = FavStore()
+    local out = {}
+    if not t then return out end
+    for id in pairs(t) do
+        local rec = d.byID[id]
+        if rec then out[#out + 1] = rec end
+    end
+    local function when(r) return t[r.id] or 0 end
+    table.sort(out, function(a, b)
+        local ta, tb = when(a), when(b)
+        if ta ~= tb then return ta > tb end
+        return a.id < b.id
+    end)
+    return out
+end
+
 --------------------------------------------------------------------------- 数据: 筛选 / 排序
 
 local SORTS = {
     { key = "price", label = "买价 ↓" },
     { key = "name",  label = "名字" },
     { key = "npcs",  label = "商人 ↓" },
+    { key = "fav",   label = "最近收藏", favOnly = true },
 }
 local sortMode = "price"
 
@@ -283,8 +349,20 @@ local function SortLabel(key)
     return "排序"
 end
 
--- q: 关键词 (物品名 / 商人名, 不区分大小写); onlyMats: 只看本插件配方用得到的
-function M.Filter(q, onlyMats)
+-- 当前页可用的排序方式: 「最近收藏」只在收藏页有意义, 货架页循环时跳过它
+local function SortModes()
+    local out = {}
+    for _, v in ipairs(SORTS) do
+        if not v.favOnly or page == "fav" then out[#out + 1] = v end
+    end
+    return out
+end
+
+-- q: 关键词 (物品名 / 商人名, 不区分大小写); onlyMats: 只看本插件配方用得到的;
+-- base: 只在给定记录里筛 (收藏页传收藏列表)。不传就是全量货架。
+-- 注意: 命中商人时会把「该商人的货物」一起算进来 —— 这个扩展天然被 base 限制住,
+-- 收藏页搜商人名只会捞出「我收藏的、这个商人卖的」那几件, 不会冒出全店的货。
+function M.Filter(q, onlyMats, base)
     local d = M.Index()
     q = (q or ""):gsub("^%s+", ""):gsub("%s+$", ""):lower()
 
@@ -310,7 +388,7 @@ function M.Filter(q, onlyMats)
 
     local wanted = (onlyMats and ns.Vendor and ns.Vendor.Wanted) or nil
     local out = {}
-    for _, rec in ipairs(d.items) do
+    for _, rec in ipairs(base or d.items) do
         if not wanted or wanted(rec.id) then
             local hit = true
             if q ~= "" then
@@ -331,7 +409,15 @@ end
 
 function M.Sort(list, mode)
     mode = mode or sortMode
-    if mode == "price" then
+    if mode == "fav" then
+        -- 最近收的排前面 (同一秒收的按 id 兜底, 保证顺序稳定)
+        local t = FavStore() or {}
+        table.sort(list, function(a, b)
+            local ta, tb = t[a.id] or 0, t[b.id] or 0
+            if ta ~= tb then return ta > tb end
+            return a.id < b.id
+        end)
+    elseif mode == "price" then
         table.sort(list, function(a, b)
             if a.price ~= b.price then return a.price > b.price end
             return a.id < b.id
@@ -479,7 +565,10 @@ local function NewChip(parent, w, h, label)
     b:SetScript("OnEnter", function() b.hover = true; Paint() end)
     b:SetScript("OnLeave", function() b.hover = false; Paint() end)
 
-    b.SetActive = function(on)
+    -- 注意形参: 外面是 b:SetActive(x) 冒号调用, 第一个参数是按钮自己。
+    -- 写成 function(on) 的话 on 收到的是一个表 (恒为真), 永远高亮 —— 材料按钮
+    -- 之前「选了材料却看不出是开着的」就是这个原因。
+    b.SetActive = function(_, on)
         b.active = on and true or false
         Paint()
     end
@@ -686,16 +775,25 @@ local function NewItemRow()
     r.bg:SetAllPoints(true)
     r.bg:SetColorTexture(1, 1, 1, 0)
 
+    -- 行首星标: 收藏 / 取消收藏。它自己是个 Button, 点它不会顺带把行展开 ——
+    -- 子控件吃掉了鼠标事件, 父按钮收不到 OnClick。
+    r.star = CreateFrame("Button", nil, r)
+    r.star:SetSize(14, 16)
+    r.star:SetPoint("LEFT", 0, 0)
+    r.starText = Font(r.star, 11, C.muted)
+    r.starText:SetPoint("CENTER", 0, 0)
+    r.starText:SetText("☆")
+
     r.caret = Font(r, F_NPC, C.muted)
-    r.caret:SetPoint("LEFT", 4, 0)
+    r.caret:SetPoint("LEFT", 16, 0)
 
     r.icon = r:CreateTexture(nil, "ARTWORK")
     r.icon:SetSize(14, 14)
-    r.icon:SetPoint("LEFT", 16, 0)
+    r.icon:SetPoint("LEFT", 27, 0)
     r.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
 
     r.title = Font(r, F_ITEM, C.text)
-    r.title:SetPoint("LEFT", 34, 0)
+    r.title:SetPoint("LEFT", 45, 0)
 
     r.cnt = Font(r, F_TIP, C.faint)
     r.cnt:SetWidth(CNT_W)
@@ -726,6 +824,35 @@ local function NewItemRow()
             expanded[rec.id] = true
         end
         ApplyQuery()
+    end)
+
+    -- 星标: 收藏 / 取消收藏。子按钮吃掉了鼠标事件, 所以不会顺带把行展开。
+    r.star:SetScript("OnEnter", function()
+        r.bg:SetColorTexture(1, 1, 1, r.open and 0.09 or 0.06)
+        r.starText:SetTextColor(T.rgb(C.goldHi))
+        local on = r.entry and M.IsFav(r.entry.rec.id)
+        TooltipAtCursor(r.star)
+        GameTooltip:ClearLines()
+        GameTooltip:AddLine(on and "取消收藏" or "加入收藏", 1, 0.82, 0.35)
+        GameTooltip:AddLine("|cff8a929e收藏的东西都在「我的收藏」页, 打开就等于先筛了一遍|r",
+            0.62, 0.65, 0.70)
+        GameTooltip:Show()
+    end)
+    r.star:SetScript("OnLeave", function()
+        r.bg:SetColorTexture(1, 1, 1, r.open and 0.05 or 0)
+        GameTooltip:Hide()
+        PaintStar(r)
+    end)
+    r.star:SetScript("OnClick", function()
+        if not r.entry then return end
+        local rec = r.entry.rec
+        local on = M.ToggleFav(rec.id)
+        ns.Print(format(on and "|cffe8c25a★ 已收藏|r %s  |cff8a929e(/wgm 收藏 查看)|r"
+            or "|cff8a929e已取消收藏|r %s", KnownName(rec)))
+        -- 收藏页里取消收藏, 这一行就该消失; 货架页只要把星标刷成空心
+        if page == "fav" then ApplyQuery() else Render() end
+        RefreshCount()
+        PaintTabs()
     end)
     return r
 end
@@ -842,6 +969,15 @@ local function PlaceRow(r, y, w)
     r:SetWidth(w)
 end
 
+-- 星标: 实心金色 = 已收藏, 空心灰 = 没收藏
+PaintStar = function(r)
+    if not r.starText or not r.entry then return end
+    local on = M.IsFav(r.entry.rec.id)
+    r.starText:SetText(on and "★" or "☆")
+    -- 没收藏的星用 muted 而不是 faint: 深色面板上 faint 太暗, 玩家看不出这儿能点
+    r.starText:SetTextColor(T.rgb(on and C.gold or C.muted))
+end
+
 local function PaintItem(r, e, y, cw)
     local rec = e.rec
     r.entry = e
@@ -849,6 +985,7 @@ local function PaintItem(r, e, y, cw)
     PlaceRow(r, y, cw)
 
     r.bg:SetColorTexture(1, 1, 1, r.open and 0.05 or 0)
+    PaintStar(r)
     r.caret:SetText(#rec.npcs > 0 and (r.open and "-" or "+") or "")
     r.icon:SetTexture(IconOf(rec))
     r.title:SetText(ItemName(rec, true))
@@ -863,7 +1000,8 @@ local function PaintItem(r, e, y, cw)
     local price = PriceOf(rec)
     r.price:SetText(price and PriceText(price) or "|cff8a929e无价|r")
 
-    local titleW = cw - 34 - PRICE_W - CNT_W - 18
+    -- 45 = 星标 14 + 展开符 + 图标 + 间隙; 剩下给名字 (再留 16 给「N 家」前的空)
+    local titleW = cw - 45 - PRICE_W - CNT_W - 16
     if titleW < 80 then titleW = 80 end
     r.title:SetWidth(titleW)
 end
@@ -939,7 +1077,20 @@ Render = function()
         if d.err then
             emptyText:SetText(d.err)
         elseif q ~= "" then
-            emptyText:SetText(format("没找到「%s」 —— 试试英文名, 或输入商人名", q))
+            if page == "fav" then
+                emptyText:SetText(format("收藏里没有「%s」 —— 清空搜索看看全部收藏", q))
+            else
+                emptyText:SetText(format("没找到「%s」 —— 试试英文名, 或输入商人名", q))
+            end
+        elseif page == "fav" then
+            -- 收藏页空着分两种: 一件都没收 / 收了但被「材料」筛掉了
+            if M.FavCount() == 0 then
+                emptyText:SetText("还没有收藏 —— 在货架上点每行开头的 ☆ 收进来")
+            elseif M.onlyMats then
+                emptyText:SetText("收藏里没有材料 —— 点「材料」切回全部")
+            else
+                emptyText:SetText("没有匹配的物品 —— 换个关键词试试")
+            end
         elseif M.onlyMats then
             emptyText:SetText("这批货里没有材料 —— 点「材料」切回全部")
         else
@@ -952,6 +1103,20 @@ end
 
 RefreshCount = function()
     if not countText then return end
+    if page == "fav" then
+        local total = M.FavCount()
+        if total == 0 then
+            countText:SetText("|cff8a929e一件都没收|r")
+        elseif #filtered == total then
+            countText:SetText(format("%d 件收藏", total))
+        elseif #filtered == 0 then
+            countText:SetText(format("|cffeb6b6b筛出 0|r |cff8a929e/ %d 件收藏|r", total))
+        else
+            countText:SetText(format("筛出 %d |cff8a929e/ %d 件收藏|r", #filtered, total))
+        end
+        return
+    end
+
     local d = M.Index()
     local total = #d.items
     if #filtered == total then
@@ -964,10 +1129,36 @@ RefreshCount = function()
     end
 end
 
+-- 页签高亮 + 收藏数量。收藏数量挂在页签上, 不点进去也知道收了几件。
+PaintTabs = function()
+    if shopTab then shopTab:SetActive(page == "shop") end
+    if favTab then
+        favTab:SetActive(page == "fav")
+        favTab.text:SetText(format("收藏 %d", M.FavCount()))
+    end
+end
+
+-- 切页: 换页时清掉搜索词 (从货架搜「瓶」切到收藏, 不该把关键词带过去),
+-- 排序方式如果在新页不存在 (最近收藏), 退回买价。
+SetPage = function(p)
+    page = (p == "fav") and "fav" or "shop"
+    if page ~= "fav" and sortMode == "fav" then sortMode = "price" end
+    if sortBtn then sortBtn.text:SetText(SortLabel(sortMode)) end
+    PaintTabs()
+    if searchEdit and (searchEdit:GetText() or "") ~= "" then
+        searchEdit:ClearFocus()
+        searchEdit:SetText("")      -- OnTextChanged 里会 ApplyQuery(true)
+        return
+    end
+    ApplyQuery(true)
+end
+
 -- 重新算筛选 + 视图, 然后画
 ApplyQuery = function(resetScroll)
     local q = searchEdit and searchEdit:GetText() or ""
-    filtered = M.Sort(M.Filter(q, M.onlyMats), sortMode)
+    local base
+    if page == "fav" then base = M.FavRecords() end
+    filtered = M.Sort(M.Filter(q, M.onlyMats, base), sortMode)
     view = M.BuildView(filtered, expanded)
 
     if listContent then
@@ -994,17 +1185,26 @@ local function BuildTitle(parent)
     title:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, TITLE_Y)
     title:SetText("商人货架")
 
-    countText = T.Text(parent, F_TIP + 1, C.muted)
-    countText:SetPoint("LEFT", title, "RIGHT", 10, 0)
-    countText:SetWordWrap(false)
-    countText:SetText("")
-
     local close = T.CloseButton(parent, function() ns.MerchantUI.Hide() end)
     close:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -(PAD - 6), TITLE_Y - 4)
 
+    -- 两个页签就是「两个页面」: 全部货架 / 我的收藏。收藏数量直接写在页签上。
+    shopTab = NewChip(parent, 46, 18, "货架")
+    shopTab:SetPoint("LEFT", title, "RIGHT", 10, 0)
+    shopTab:SetScript("OnClick", function() SetPage("shop") end)
+
+    favTab = NewChip(parent, 62, 18, "收藏 0")
+    favTab:SetPoint("LEFT", shopTab, "RIGHT", 4, 0)
+    favTab:SetScript("OnClick", function() SetPage("fav") end)
+
+    countText = T.Text(parent, F_TIP + 1, C.muted)
+    countText:SetPoint("RIGHT", close, "LEFT", -10, 0)
+    countText:SetWordWrap(false)
+    countText:SetText("")
+
     local hint = T.Text(parent, F_TIP, C.faint)
     hint:SetPoint("BOTTOMLEFT", parent, "BOTTOMLEFT", PAD, 11)
-    hint:SetText("左键点物品展开商人 · 左键点商人设路径点 · 右键物品在拍卖行搜索")
+    hint:SetText("★ 收藏 · 左键物品展开商人 · 左键商人设路径点 · 右键物品在拍卖行搜索")
     hint:SetWordWrap(false)
 end
 
@@ -1060,11 +1260,12 @@ local function BuildSearch(parent)
     sortBtn = NewChip(parent, 78, SEARCH_H, SortLabel(sortMode))
     sortBtn:SetPoint("TOPLEFT", parent, "TOPLEFT", x, SEARCH_Y)
     sortBtn:SetScript("OnClick", function()
+        local modes = SortModes()
         local i = 1
-        for k, v in ipairs(SORTS) do if v.key == sortMode then i = k end end
-        i = i % #SORTS + 1
-        sortMode = SORTS[i].key
-        sortBtn.text:SetText(SORTS[i].label)
+        for k, v in ipairs(modes) do if v.key == sortMode then i = k end end
+        i = i % #modes + 1
+        sortMode = modes[i].key
+        sortBtn.text:SetText(modes[i].label)
         ApplyQuery()
     end)
 
@@ -1197,7 +1398,8 @@ end
 
 --------------------------------------------------------------------------- 对外
 
-function ns.MerchantUI.Show()
+-- p: 打开哪一页 ("shop" 全部货架 / "fav" 我的收藏), 不传就留在当前页
+function ns.MerchantUI.Show(p)
     if not frame then
         local ok, err = pcall(ns.MerchantUI.Build)
         if not ok then
@@ -1205,9 +1407,28 @@ function ns.MerchantUI.Show()
             return
         end
     end
+    if p then
+        page = (p == "fav") and "fav" or "shop"
+        if page ~= "fav" and sortMode == "fav" then sortMode = "price" end
+    end
     frame:Show()
     pcall(function() frame:Raise() end)
-    ApplyQuery()
+    if sortBtn then sortBtn.text:SetText(SortLabel(sortMode)) end
+    PaintTabs()
+    -- 每次打开都是新的一次浏览: 上次的搜索词跟过去只会让人困惑
+    -- (ShowFav 传了关键词的话会在下面重新填上)
+    if searchEdit and (searchEdit:GetText() or "") ~= "" then searchEdit:SetText("") end
+    ApplyQuery(true)
+end
+
+-- 我的收藏页。q 可选: /wgm 收藏 <词> 直接带关键词
+function ns.MerchantUI.ShowFav(q)
+    ns.MerchantUI.Show("fav")
+    if q and q ~= "" and searchEdit then
+        searchEdit:SetText(q)
+        searchEdit:SetFocus()
+        searchEdit:HighlightText()
+    end
 end
 
 function ns.MerchantUI.Hide()
@@ -1221,13 +1442,13 @@ function ns.MerchantUI.Toggle()
     if frame and frame:IsShown() then
         ns.MerchantUI.Hide()
     else
-        ns.MerchantUI.Show()
+        ns.MerchantUI.Show("shop")
     end
 end
 
 -- 打开并直接搜某个关键词 (给 /wgm 货架 <关键词> 用)
 function ns.MerchantUI.Search(text)
-    ns.MerchantUI.Show()
+    ns.MerchantUI.Show("shop")
     if searchEdit then
         searchEdit:SetText(text or "")
         searchEdit:SetFocus()
