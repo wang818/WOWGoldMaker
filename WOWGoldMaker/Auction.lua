@@ -48,22 +48,29 @@ local function Now()
     return (type(time) == "function" and time()) or 0
 end
 
+-- 金额文字统一染色: 金/银/铜 三段各自的颜色由 Theme 提供。
+-- 拿不到 Theme (单元测试只加载本文件) 就原样返回, 逻辑不受影响。
+local function Dye(s)
+    if ns.T and ns.T.MoneyColor then return ns.T.MoneyColor(s) end
+    return s
+end
+
 -- 铜 → 简短中文金额 (12金34银 / 3银 / 45铜)。会丢掉铜位, 用在「够看就行」的地方。
 function AH.Money(copper)
     local c = math.floor(math.abs(tonumber(copper) or 0))
     local g = math.floor(c / 10000)
     local s = math.floor((c % 10000) / 100)
     if g >= 10000 then
-        return format("%.1f万金", g / 10000)
+        return Dye(format("%.1f万金", g / 10000))
     end
     if g > 0 then
         if s > 0 and g < 1000 then
-            return format("%d金%d银", g, s)
+            return Dye(format("%d金%d银", g, s))
         end
-        return format("%d金", g)
+        return Dye(format("%d金", g))
     end
-    if s > 0 then return format("%d银", s) end
-    return format("%d铜", c)
+    if s > 0 then return Dye(format("%d银", s)) end
+    return Dye(format("%d铜", c))
 end
 
 -- 铜 → 精确到 1 铜的金额 (1金23银45铜)。盈亏用它: 1金 = 100银 = 100铜,
@@ -78,11 +85,11 @@ function AH.MoneyEx(copper)
     if g >= 100000 then
         -- 十万金以上才用「万」缩写, 且四舍五入到 0.1 万金 = 1000 金, 已经无法精确到铜,
         -- 前面加 ≈ 让「这是约数」看得出来
-        return format("≈%.1f万金", g / 10000)
+        return Dye(format("≈%.1f万金", g / 10000))
     end
-    if g > 0 then return format("%d金%d银%d铜", g, s, k) end
-    if s > 0 then return format("%d银%d铜", s, k) end
-    return format("%d铜", k)
+    if g > 0 then return Dye(format("%d金%d银%d铜", g, s, k)) end
+    if s > 0 then return Dye(format("%d银%d铜", s, k)) end
+    return Dye(format("%d铜", k))
 end
 
 local function Cache()

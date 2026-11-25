@@ -34,7 +34,48 @@ end
 
 function T.hex(c)
     if type(c) ~= "table" then c = T.C.white end
-    return format("%02x%02x%02x", c[1] * 255, c[2] * 255, c[3] * 255)
+    -- 取整: 0-1 的浮点乘 255 在 Lua 5.3+ 上不能直接进 %02x (5.1 会默默截断)
+    return format("%02x%02x%02x", math.floor(c[1] * 255 + 0.5),
+        math.floor(c[2] * 255 + 0.5), math.floor(c[3] * 255 + 0.5))
+end
+
+-- ------------------------------------------------------------------ 货币配色
+-- 金 / 银 / 铜 三段各自的颜色: 金=亮黄, 银=银白, 铜=古铜。
+-- 文字里用 T.COIN_CODE 的 |cff 串, 控件上色用 T.rgb(T.COIN.xxx), 两边同一个源。
+T.COIN = {
+    gold   = { 1.00, 0.82, 0.06 },
+    silver = { 0.90, 0.93, 0.96 },
+    copper = { 0.72, 0.45, 0.20 },
+}
+T.COIN_CODE = {
+    gold   = "|cff" .. T.hex(T.COIN.gold),
+    silver = "|cff" .. T.hex(T.COIN.silver),
+    copper = "|cff" .. T.hex(T.COIN.copper),
+}
+
+-- 把「12金34银5铜」里每一段染成各自的钱币色 (数字连同单位一起染, 否则会出现
+-- 数字是黄的、单位字还是白的)。已经是带色串 (含 |c) 的原样返回 —— 二次染色会把码套乱。
+--
+-- 注意两点:
+--   * Lua 的字符集 [金银铜] 是按字节比的 (三个字各 3 字节), 混在一个集合里只会匹到
+--     "半个汉字"; 所以一种单位跑一遍, 单位字直接拼进模式;
+--   * "万?" 也不行 —— ? 只作用于最后一个字节, 会把「万」拆坏。万/无万分两遍做。
+local function DyeUnit(text, unit, code)
+    text = text:gsub("(%d+%.?%d*万)" .. unit, function(num)
+        return code .. num .. unit .. "|r"
+    end)
+    return (text:gsub("(%d+%.?%d*)" .. unit, function(num)
+        return code .. num .. unit .. "|r"
+    end))
+end
+
+function T.MoneyColor(text)
+    if type(text) ~= "string" or text == "" then return text end
+    if text:find("|c", 1, true) then return text end
+    text = DyeUnit(text, "金", T.COIN_CODE.gold)
+    text = DyeUnit(text, "银", T.COIN_CODE.silver)
+    text = DyeUnit(text, "铜", T.COIN_CODE.copper)
+    return text
 end
 
 -- ------------------------------------------------------------------ 字体

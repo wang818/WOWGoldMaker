@@ -107,10 +107,10 @@
   .greet .name { color: #ffcf5c; }
 
   .money { font-size: 10px; font-weight: 700; letter-spacing: .2px; white-space: nowrap; }
-  .m-gold { color: #ffd100; }
-  .m-silver { color: #e6edf5; }
-  .m-copper { color: #b87333; }
-  .money .unit { color: #fff; font-weight: 400; }
+  /* 货币三段配色 (金=亮黄 / 银=银白 / 铜=古铜), 对应游戏里的 T.COIN_CODE */
+  .m-gold, .mg { color: #ffd100; }
+  .m-silver, .ms { color: #e6edf5; }
+  .m-copper, .mc { color: #b87333; }
 
   .spacer { flex: 1 1 auto; }
 
@@ -197,6 +197,10 @@
     font-size: 11px; font-weight: 400; color: var(--text);
   }
   .ne-cell span { flex: 0 0 14px; font-size: 9px; color: var(--faint); }
+  /* 单位标签本身也要钱币色 (金/银/铜各一色) */
+  .ne-cell .mg { color: #ffd100; }
+  .ne-cell .ms { color: #e6edf5; }
+  .ne-cell .mc { color: #b87333; }
   .ne-hint { font-size: 8px; color: var(--faint); margin-top: 5px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .ne-btns { position: absolute; right: 14px; bottom: 12px; display: flex; gap: 6px; }
@@ -403,7 +407,7 @@
 </head>
 <body>
 
-<h1><b>WOWGOLDMAKER</b> · 单页预览 (v0.8.4)</h1>
+<h1><b>WOWGOLDMAKER</b> · 单页预览 (v0.8.5)</h1>
 
 <div class="window">
   <div class="shadow"></div>
@@ -420,9 +424,9 @@
       </div>
       <div class="greet" id="greeting">下午好, <span class="name">冒险者</span></div>
       <div class="money" id="money">
-        <span class="m-gold">12,345</span><span class="unit">金</span>
-        <span class="m-silver">67</span><span class="unit">银</span>
-        <span class="m-copper">89</span><span class="unit">铜</span>
+        <span class="m-gold">12,345金</span>
+        <span class="m-silver">67银</span>
+        <span class="m-copper">89铜</span>
       </div>
       <div class="spacer"></div>
       <div class="lv" id="lv">Lv.60</div>
@@ -448,9 +452,9 @@
       <div class="ne-title">NPC 购买价</div>
       <div class="ne-who">空瓶</div>
       <div class="ne-row">
-        <div class="ne-cell"><b>1</b><span>金</span></div>
-        <div class="ne-cell"><b>20</b><span>银</span></div>
-        <div class="ne-cell"><b>5</b><span>铜</span></div>
+        <div class="ne-cell"><b>1</b><span class="mg">金</span></div>
+        <div class="ne-cell"><b>20</b><span class="ms">银</span></div>
+        <div class="ne-cell"><b>5</b><span class="mc">铜</span></div>
       </div>
       <div class="ne-hint" style="color:var(--gold)">= 1金20银5铜</div>
       <div class="ne-btns">
@@ -471,7 +475,7 @@
 </div>
 
 <div class="settings">
-  <h2><span>金币工坊</span> v0.8.4</h2>
+  <h2><span>金币工坊</span> v0.8.5</h2>
   <div class="sub">魔兽世界无限服 · 金币工具箱</div>
   <hr>
   <div class="row" id="row1"><div class="box"><span class="check">✓</span></div><span class="lbl">登录后自动呼出主界面</span></div>
@@ -685,6 +689,51 @@
     const val = v === 0 ? "" : moneyEx(v);
     return `<div class="${label === "AH" ? "price" : "npcprice"} ${cls}">${label} ${word}${val}</div>`;
   }
+
+  /* 金额统一染色 (对应游戏里 T.MoneyColor 的效果): 把「数字+金/银/铜」包成带色的 span。
+     列表是 innerHTML 拼出来的, 所以不逐个改渲染函数, 而是盯着 DOM 变动, 新出现的
+     文字节点顺手染一遍; 已经在 .mg/.ms/.mc 里的跳过, 不会反复套色。 */
+  function paintMoney(root) {
+    if (!root) return;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+    const jobs = [];
+    let n;
+    while ((n = walker.nextNode())) {
+      const p = n.parentElement;
+      if (!p || p.closest(".mg, .ms, .mc")) continue;
+      if (!/\d[金银铜]/.test(n.nodeValue)) continue;
+      jobs.push(n);
+    }
+    for (const node of jobs) {
+      const s = node.nodeValue, re = /(\d+\.?\d*万?)([金银铜])/g;
+      const frag = document.createDocumentFragment();
+      let last = 0, m;
+      while ((m = re.exec(s))) {
+        if (m.index > last) frag.appendChild(document.createTextNode(s.slice(last, m.index)));
+        const sp = document.createElement("span");
+        sp.className = m[2] === "金" ? "mg" : m[2] === "银" ? "ms" : "mc";
+        sp.textContent = m[0];
+        frag.appendChild(sp);
+        last = m.index + m[0].length;
+      }
+      if (!last) continue;
+      if (last < s.length) frag.appendChild(document.createTextNode(s.slice(last)));
+      node.parentNode.replaceChild(frag, node);
+    }
+  }
+
+  new MutationObserver(muts => {
+    for (const mu of muts) {
+      if (mu.type === "characterData") {
+        paintMoney(mu.target.parentElement);
+      } else {
+        for (const added of mu.addedNodes) {
+          if (added.nodeType === 1) paintMoney(added);
+          else if (added.nodeType === 3 && added.parentElement) paintMoney(added.parentElement);
+        }
+      }
+    }
+  }).observe(document.body, { childList: true, subtree: true, characterData: true });
 
   function renderTabs() {
     $tabs.innerHTML = "";

@@ -393,8 +393,8 @@ local function SetText(fs, txt, tag)
     return true
 end
 
--- 货币配色: 金=亮黄, 银=银白, 铜=古铜
-local MONEY_C = {
+-- 货币配色沿用 Theme 的那一套 (金=亮黄, 银=银白, 铜=古铜); 测试桩里没有就退回内置值
+local MONEY_C = T.COIN_CODE or {
     gold   = "|cffffd100",
     silver = "|cffe6edf5",
     copper = "|cffb87333",
@@ -406,13 +406,13 @@ local function Comma(n)
     return (rev:reverse():gsub("^,", ""))
 end
 
--- 一行显示: 1,234金 56银 78铜 (三段各自配色)
+-- 一行显示: 1,234金 56银 78铜 (数字和单位同一段颜色)
 local function MoneyLine(money)
     local g = math.floor(money / 10000)
     local s = math.floor((money % 10000) / 100)
     local c = money % 100
     local gText = g >= 100000 and format("%.1f万", g / 10000) or Comma(g)
-    return format("%s%s|r|cffffffff金|r %s%d|r|cffffffff银|r %s%d|r|cffffffff铜|r",
+    return format("%s%s金|r %s%d银|r %s%d铜|r",
         MONEY_C.gold, gText, MONEY_C.silver, s, MONEY_C.copper, c)
 end
 
@@ -742,16 +742,23 @@ end
 -- 粗略文字宽度 (中文 ≈ 字号, 数字/字母 ≈ 字号 x 0.55)
 -- 只用来在几种金额写法之间挑一个放得下的, 不需要精确, 所以不做 FontString 实测 ——
 -- 列表可能有上千行, 每格都 GetStringWidth 一次会让渲染明显变卡。
+-- 金额文字带 |cffRRGGBB...|r 的颜色码, 这些不显示、也不占宽度, 要跳过 (否则带色的
+-- 金额会被算宽一倍, 标签明明放得下也会被藏掉)。
 local function ApproxWidth(s, size)
     size = size or F_MAT
     local wide, ascii = size, size * 0.55
     local w, i, len = 0, 1, #s
     while i <= len do
         local b = s:byte(i)
-        if b >= 0xE0 then            -- 3 字节: 中日韩字符
+        if b == 0x7C then               -- '|': 颜色/材质码, 直接跳
+            local nxt = s:byte(i + 1)
+            if nxt == 0x63 then i = i + 10       -- |cffRRGGBB
+            elseif nxt == 0x72 then i = i + 2    -- |r
+            else i = i + 1 end
+        elseif b >= 0xE0 then            -- 3 字节: 中日韩字符
             w = w + wide
             i = i + 3
-        elseif b >= 0xC0 then        -- 2 字节: 带音标的拉丁字母等
+        elseif b >= 0xC0 then            -- 2 字节: 带音标的拉丁字母等
             w = w + wide * 0.75
             i = i + 2
         else
@@ -2347,6 +2354,12 @@ local function BuildNpcEditor()
     -- 金/银/铜 各一个格子, 只收数字: 一个框里打 "1金20银5铜" 单位一多就容易打错,
     -- 分开填就不存在单位问题; 下面一行负责把三个格子翻成整钱, 随时能核对自己填的对不对
     local UNITS = { "金", "银", "铜" }
+    -- 单位标签本身也用钱币色 (金=黄 / 银=银白 / 铜=古铜), 和金额文字同一套
+    local UNIT_C = {
+        (T.COIN and T.COIN.gold) or C.gold,
+        (T.COIN and T.COIN.silver) or C.muted,
+        (T.COIN and T.COIN.copper) or C.faint,
+    }
     local boxes, cells = {}, {}
     for i = 1, 3 do
         local cell = T.Line(f, 70, 20, C.white, 0.06)
@@ -2363,7 +2376,7 @@ local function BuildNpcEditor()
         eb:SetMaxLetters(6)
         eb:SetTextInsets(1, 1, 0, 0)
 
-        local lbl = T.Text(f, 9, C.faint)
+        local lbl = T.Text(f, 9, UNIT_C[i])
         lbl:SetPoint("LEFT", cell, "RIGHT", 4, 0)
         lbl:SetWidth(14)
         lbl:SetText(UNITS[i])

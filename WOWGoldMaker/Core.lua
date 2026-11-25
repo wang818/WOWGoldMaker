@@ -214,9 +214,11 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
             ns.UI.RefreshStats()
             local s = ns.UI.lastStats
             if s then
+                local coin = tostring(s.gold) .. "金" .. tostring(s.silver) .. "银"
+                    .. tostring(s.copper) .. "铜"
+                if ns.T and ns.T.MoneyColor then coin = ns.T.MoneyColor(coin) end
                 print("|cffe8c25a[WGM 数据]|r 铜=" .. tostring(s.money)
-                    .. " → " .. tostring(s.gold) .. "金" .. tostring(s.silver) .. "银"
-                    .. tostring(s.copper) .. "铜 | 等级=" .. tostring(s.level))
+                    .. " → " .. coin .. " | 等级=" .. tostring(s.level))
             else
                 print("|cffff5555[WGM 数据]|r 刷新未产生数据, 输 /wgm debug 看详情")
             end
