@@ -4,7 +4,7 @@
 ## Notes: Modern gold-making toolkit for WoW Forever.
 ## Notes-zhCN: 金币工坊 —— 无限服现代风格插件
 ## Author: WOWGoldMaker
-## Version: 0.9.0
+## Version: 0.10.0
 ## Category: 实用工具
 ## IconTexture: Interface\Icons\INV_Misc_Coin_01
 ## SavedVariables: WOWGoldMakerDB
@@ -14,8 +14,10 @@ Core.lua
 Settings.lua
 ProfData.lua
 VendorData.lua
+MerchantData.lua
 Professions.lua
 Auction.lua
 Npc.lua
 Vendor.lua
 UI.lua
+MerchantUI.lua

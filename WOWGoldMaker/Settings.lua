@@ -85,12 +85,23 @@ function ns.BuildSettings()
         ns.UI.Show()
     end)
 
+    local shop = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    shop:SetSize(140, 24)
+    shop:SetPoint("LEFT", open, "RIGHT", 10, 0)
+    shop:SetText("打开商人货架")
+    shop:SetScript("OnClick", function()
+        if SettingsPanel and HideUIPanel then
+            pcall(HideUIPanel, SettingsPanel)
+        end
+        if ns.MerchantUI and ns.MerchantUI.Show then ns.MerchantUI.Show() end
+    end)
+
     -- 命令说明
     local help = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
     help:SetPoint("TOPLEFT", 20, -240)
     help:SetJustifyH("LEFT")
     help:SetTextColor(T.rgb(C.muted))
-    help:SetText("|cffe8c25a/wgm|r        开关主界面\n|cffe8c25a/wgm reset|r  重置位置\n|cffe8c25a/wgm config|r 打开本设置页")
+    help:SetText("|cffe8c25a/wgm|r        开关主界面\n|cffe8c25a/wgm reset|r  重置位置\n|cffe8c25a/wgm 商人|r   打开商人货架\n|cffe8c25a/wgm config|r 打开本设置页")
 
     local ok, cat = pcall(Settings.RegisterCanvasLayoutCategory, panel, "金币工坊")
     if ok and cat then

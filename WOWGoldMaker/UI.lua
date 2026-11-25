@@ -694,7 +694,30 @@ local function BuildTabs(f)
         tabs[prof.key] = tab
     end
 
-    -- 右侧: 配方 / 材料汇总 切换
+    -- 右侧: 商人货架 / 配方·材料汇总 切换
+    -- 商人货架是独立窗口 (MerchantUI.lua), 这里只放进入口 —— 主面板一行塞不下页签了
+    local vendorBtn = MakeMiniButton(f, 46, TAB_H, "商人")
+    vendorBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -(PAD - 6) - 72, TAB_Y)
+    vendorBtn:SetScript("OnClick", function()
+        if ns.MerchantUI and ns.MerchantUI.Toggle then ns.MerchantUI.Toggle() end
+    end)
+    vendorBtn:SetScript("OnEnter", function(s)
+        s.bg:SetVertexColor(1, 1, 1, 0.20)
+        s.text:SetTextColor(T.rgb(C.text))
+        GameTooltip:SetOwner(s, "ANCHOR_CURSOR_RIGHT")
+        GameTooltip:ClearLines()
+        GameTooltip:AddLine("商人货架", 1, 0.82, 0.35)
+        GameTooltip:AddLine("|cff8a929e浏览所有商人卖什么, 反查某件物品哪个商人卖|r", 0.82, 0.84, 0.88)
+        GameTooltip:AddLine("|cff8a929e/wgm 商人|r", 0.55, 0.58, 0.62)
+        GameTooltip:Show()
+    end)
+    vendorBtn:SetScript("OnLeave", function(s)
+        s.bg:SetVertexColor(1, 1, 1, 0.10)
+        s.text:SetTextColor(T.rgb(C.muted))
+        GameTooltip:Hide()
+    end)
+    refs.vendorBtn = vendorBtn
+
     local sw = MakeMiniButton(f, 66, TAB_H, "材料汇总")
     sw:SetPoint("TOPRIGHT", f, "TOPRIGHT", -(PAD - 6), TAB_Y)
     sw:SetScript("OnClick", function()

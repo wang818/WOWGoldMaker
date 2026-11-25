@@ -161,6 +161,8 @@
   .tico.cook { background: linear-gradient(160deg,#7a4a1c,#3a2210); color: #ffe0b0; }
   .tico.alch { background: linear-gradient(160deg,#4a2a63,#251636); color: #e3cdff; }
   .switch { position: absolute; top: 44px; right: 14px; height: 20px; }
+  /* 商人货架入口 (对应 UI.lua 页签行里的「商人」按钮) */
+  .vendorbtn { position: absolute; top: 44px; right: 86px; height: 20px; }
 
   /* ---------- 配方列表 ---------- */
   .list {
@@ -413,11 +415,108 @@
   .settings .gbtn:hover { background: rgba(255,255,255,.12); }
   .settings .help { margin-top: 16px; font-size: 12px; color: var(--muted); line-height: 1.9; }
   .settings .help b { color: var(--gold); font-weight: 600; }
+  /* ---------- 商人货架窗口 (对应 MerchantUI.lua) ----------
+     独立窗口: 标题 / 搜索框 / 排序 / 筛选 / 虚拟列表 / 页脚。
+     内容按设计坐标 440x500 写, 运行时整体等比缩放 (同主面板) */
+  .window.shop { display: none; }
+  body.shop-mode .window { display: none; }
+  body.shop-mode .window.shop { display: block; }
+
+  .shop-content { width: 440px; height: 500px; }
+  .shop-title { position: absolute; left: 20px; top: 4px; font-size: 13px; font-weight: 700; color: var(--gold); }
+  .shop-count { position: absolute; left: 92px; top: 8px; font-size: 9px; color: var(--muted); white-space: nowrap; }
+  .shop-close { position: absolute; right: 14px; top: 0; }
+
+  .shop-search {
+    position: absolute; left: 20px; top: 30px; width: 190px; height: 22px;
+    box-sizing: border-box; border: none; border-radius: 6px;
+    padding: 0 22px 0 9px; outline: none;
+    background: rgba(255,255,255,.06);
+    color: var(--text); font-size: 10px; font-family: inherit;
+  }
+  .shop-search::placeholder { color: var(--faint); }
+  .shop-search:focus { box-shadow: inset 0 0 0 1px rgba(232,194,90,.35); }
+
+  .chip {
+    position: absolute; top: 30px; height: 22px; padding: 0 8px;
+    border: none; border-radius: 6px; cursor: pointer;
+    background: rgba(255,255,255,.10); color: var(--muted);
+    font-size: 9px; font-weight: 600; font-family: inherit; white-space: nowrap;
+    transition: background .15s, color .15s;
+  }
+  .chip:hover { background: rgba(255,255,255,.20); color: var(--text); }
+  .chip.on { background: rgba(232,194,90,.85); color: var(--ink); }
+  #sortChip { left: 220px; width: 78px; }
+  #filterChip { left: 306px; width: 60px; }
+
+  .shop-list {
+    position: absolute; left: 20px; top: 58px; right: 26px; bottom: 26px;
+    overflow-y: auto; overflow-x: hidden;
+  }
+  .shop-list::-webkit-scrollbar { width: 3px; }
+  .shop-list::-webkit-scrollbar-thumb { background: rgba(232,194,90,.5); border-radius: 2px; }
+  .shop-list::-webkit-scrollbar-track { background: rgba(255,255,255,.05); }
+
+  .srow {
+    height: 24px; display: flex; align-items: center; border-radius: 5px; cursor: pointer;
+  }
+  .srow:hover { background: rgba(255,255,255,.06); }
+  .srow.open { background: rgba(255,255,255,.05); }
+  .srow .caret { flex: 0 0 12px; margin-left: 4px; text-align: center; font-size: 9px; color: var(--muted); }
+  .srow .sicon {
+    flex: 0 0 14px; width: 14px; height: 14px; border-radius: 3px; margin: 0 4px 0 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 8px; color: rgba(255,255,255,.85); font-weight: 700;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.10);
+  }
+  .srow .sname { flex: 1 1 auto; min-width: 0; font-size: 10px; color: var(--text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .srow .scnt { flex: 0 0 44px; width: 44px; margin-right: 6px; text-align: right; font-size: 8px; color: var(--faint); }
+  .srow .sprice { flex: 0 0 96px; width: 96px; margin-right: 6px; text-align: right; font-size: 10px; font-weight: 700;
+    white-space: nowrap; overflow: hidden; }
+
+  .subrow {
+    height: 17px; display: flex; align-items: center; cursor: pointer; position: relative;
+    padding-left: 34px;
+  }
+  .subrow:hover { background: rgba(255,255,255,.05); }
+  .subrow::before { content: ""; position: absolute; left: 18px; top: 0; bottom: 0; width: 1px; background: rgba(255,255,255,.10); }
+  .subname { flex: 0 0 150px; width: 150px; font-size: 9px; color: var(--text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .subzone { flex: 1 1 auto; min-width: 0; margin-left: 8px; font-size: 9px; color: var(--muted);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .subfac { flex: 0 0 30px; width: 30px; margin-right: 6px; text-align: right; font-size: 9px; }
+  .fac-A { color: #739ff2; } .fac-H { color: #eb6b6b; } .fac-N { color: var(--faint); }
+
+  .shop-foot { position: absolute; left: 20px; bottom: 11px; font-size: 8px; color: var(--faint); white-space: nowrap; }
+  .shop-empty { font-size: 10px; color: var(--faint); text-align: center; margin-top: 40px; }
+  .shop-toast {
+    position: absolute; left: 50%; bottom: 22px; height: 22px; max-width: calc(100% - 40px);
+    display: flex; align-items: center; padding: 0 12px; border-radius: 8px;
+    background: rgba(15,17,21,.96); box-shadow: 0 6px 18px rgba(0,0,0,.45), inset 0 0 0 1px rgba(74,199,168,.24);
+    color: var(--teal); font-size: 10px; white-space: nowrap;
+    transform: translate(-50%, 6px); opacity: 0; pointer-events: none;
+    transition: opacity .16s ease, transform .16s ease;
+  }
+  .shop-toast.on { opacity: 1; transform: translate(-50%, 0); }
+
+  /* 「主界面 / 商人货架」视图切换 (固定在左上, 和右下角的主面板不打架) */
+  .modebar {
+    position: fixed; left: 20px; top: 16px; z-index: 30;
+    display: flex; gap: 8px; align-items: center;
+  }
+  .modebar .hint { font-size: 11px; color: var(--faint); margin-left: 4px; }
+  .modebar button {
+    padding: 6px 16px; border-radius: 7px; cursor: pointer;
+    border: 1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.05);
+    color: var(--muted); font-size: 12px; font-family: inherit;
+  }
+  .modebar button.on { border-color: rgba(232,194,90,.6); background: rgba(232,194,90,.16); color: var(--gold); }
 </style>
 </head>
 <body>
 
-<h1><b>WOWGOLDMAKER</b> · 单页预览 (v0.9.0)</h1>
+<h1><b>WOWGOLDMAKER</b> · 单页预览 (v0.10.0)</h1>
 
 <div class="window">
   <div class="shadow"></div>
@@ -449,6 +548,7 @@
 
     <!-- 第二行 -->
     <div class="tabs" id="tabs"></div>
+    <button class="mini vendorbtn" id="vendorBtn" title="打开商人货架">商人</button>
     <button class="mini switch" id="switchBtn">材料汇总</button>
 
     <!-- 配方列表 (内嵌, 默认急救) -->
@@ -474,8 +574,38 @@
   </div>
 </div>
 
+
+<!-- ==================== 商人货架窗口 (对应 MerchantUI.lua) ==================== -->
+<div class="window shop" id="shopWin">
+  <div class="shadow"></div>
+  <div class="panel"></div>
+  <div class="blob gold"></div>
+  <div class="blob teal"></div>
+
+  <div class="content shop-content" id="shopContent">
+    <div class="shop-title">商人货架</div>
+    <div class="shop-count" id="shopCount">985 种货 · 829 位商人 · 10903 条货架</div>
+    <button class="close shop-close" title="关闭"><i class="x x1"></i><i class="x x2"></i></button>
+
+    <input class="shop-search" id="shopSearch" placeholder="搜索物品 / 商人" autocomplete="off">
+    <button class="chip" id="sortChip">买价 ↓</button>
+    <button class="chip" id="filterChip">全部</button>
+
+    <div class="shop-list" id="shopList"></div>
+
+    <div class="shop-foot">左键点物品展开商人 · 左键点商人设路径点 · 右键物品在拍卖行搜索</div>
+    <div class="shop-toast" id="shopToast"><span id="shopToastText"></span></div>
+  </div>
+</div>
+
 <!-- 行悬停提示, 对应 ns.UI.ShowRowTooltip -->
 <div class="tip" id="tip"></div>
+
+<div class="modebar" id="modeBar">
+  <button data-mode="home" class="on">主界面</button>
+  <button data-mode="shop">商人货架</button>
+  <span class="hint">货架预览只放了 160 件抽样 (真实 985 件)</span>
+</div>
 
 <div class="demo">
   <label><input type="checkbox" id="ahOpen"> 模拟：拍卖行窗口已打开</label>
@@ -485,7 +615,7 @@
 </div>
 
 <div class="settings">
-  <h2><span>金币工坊</span> v0.9.0</h2>
+  <h2><span>金币工坊</span> v0.10.0</h2>
   <div class="sub">魔兽世界无限服 · 金币工具箱</div>
   <hr>
   <div class="row" id="row1"><div class="box"><span class="check">✓</span></div><span class="lbl">登录后自动呼出主界面</span></div>
@@ -494,9 +624,10 @@
   <div class="btnrow">
     <button class="gbtn">重置窗口位置</button>
     <button class="gbtn">打开主界面</button>
+    <button class="gbtn" id="settingsShop">打开商人货架</button>
   </div>
   <div class="help">
-    <b>/wgm</b> 开关主界面 &nbsp;·&nbsp; <b>/wgm reset</b> 重置位置 &nbsp;·&nbsp; <b>/wgm config</b> 打开本设置页
+    <b>/wgm</b> 开关主界面 &nbsp;·&nbsp; <b>/wgm 商人</b> 打开商人货架 &nbsp;·&nbsp; <b>/wgm reset</b> 重置位置 &nbsp;·&nbsp; <b>/wgm config</b> 打开本设置页
   </div>
 </div>
 
@@ -1175,6 +1306,1136 @@
     const ss = String(s % 60).padStart(2, "0");
     document.getElementById("sess").textContent = mm + ":" + ss;
   }, 1000);
+</script>
+
+<script>
+/* ==================== 商人货架 (对应 MerchantUI.lua) ====================
+   布局与游戏里一一对应: 设计坐标 440x500, 整体等比缩放居中;
+   列表是虚拟化的, 但预览里只有 160 件抽样, 直接全量渲染就行。 */
+
+/* SHOP_DATA_BEGIN (由 tools/gen_preview_shop.js 生成, 不要手改) */
+const SHOP_ZONES = {
+  1411: "杜隆塔尔|Durotar",
+  1412: "莫高雷|Mulgore",
+  1413: "贫瘠之地|The Barrens",
+  1416: "奥特兰克山脉|Alterac Mountains",
+  1417: "阿拉希高地|Arathi Highlands",
+  1418: "荒芜之地|Badlands",
+  1419: "诅咒之地|Blasted Lands",
+  1420: "提瑞斯法林地|Tirisfal Glades",
+  1421: "银松森林|Silverpine Forest",
+  1422: "西瘟疫之地|Western Plaguelands",
+  1423: "东瘟疫之地|Eastern Plaguelands",
+  1424: "希尔斯布莱德丘陵|Hillsbrad Foothills",
+  1425: "辛特兰|The Hinterlands",
+  1426: "丹莫罗|Dun Morogh",
+  1427: "灼热峡谷|Searing Gorge",
+  1428: "燃烧平原|Burning Steppes",
+  1429: "艾尔文森林|Elwynn Forest",
+  1431: "暮色森林|Duskwood",
+  1432: "洛克莫丹|Loch Modan",
+  1433: "赤脊山|Redridge Mountains",
+  1434: "荆棘谷|Stranglethorn Vale",
+  1435: "悲伤沼泽|Swamp of Sorrows",
+  1436: "西部荒野|Westfall",
+  1437: "湿地|Wetlands",
+  1438: "泰达希尔|Teldrassil",
+  1439: "黑海岸|Darkshore",
+  1440: "灰谷|Ashenvale",
+  1441: "千针石林|Thousand Needles",
+  1442: "石爪山脉|Stonetalon Mountains",
+  1443: "凄凉之地|Desolace",
+  1444: "菲拉斯|Feralas",
+  1445: "尘泥沼泽|Dustwallow Marsh",
+  1446: "塔纳利斯|Tanaris",
+  1447: "艾萨拉|Azshara",
+  1448: "费伍德森林|Felwood",
+  1449: "安戈洛环形山|Un'Goro Crater",
+  1450: "月光林地|Moonglade",
+  1451: "希利苏斯|Silithus",
+  1452: "冬泉谷|Winterspring",
+  1453: "暴风城|Stormwind City",
+  1454: "奥格瑞玛|Orgrimmar",
+  1455: "铁炉堡|Ironforge",
+  1456: "雷霆崖|Thunder Bluff",
+  1457: "达纳苏斯|Darnassus",
+  1458: "幽暗城|Undercity",
+};
+const SHOP_NPCS = {
+  54: "Corina Steele|1429|4.1,6.5|A",
+  66: "Tharynn Bouden|1429|4.1,6.7|A",
+  74: "Kurran Steele|1429|4.1,6.5|A",
+  151: "Brog Hamfist|1429|4.3,6.6|A",
+  152: "Brother Danil|1429|4.7,4.1|A",
+  167: "Morhan Coppertongue|1432|3.4,4.6|A",
+  190: "Dermot Johns|1429|4.7,4.1|A",
+  222: "Nillen Andemar|1432|4.2,1.0|A",
+  226: "Morg Gnarltree|1431|7.3,4.8|A",
+  227: "Mabel Solaj|1431|7.4,4.4|A",
+  228: "Avette Fellwood|1431|7.3,4.4|A",
+  233: "Farmer Saldean|1436|5.6,3.1|A",
+  258: "Joshua Maclure|1429|4.2,8.9|A",
+  274: "Barkeep Hann|1431|7.3,4.4|A",
+  277: "Roberto Pupellyverbos|1453|5.9,7.6|A",
+  295: "Innkeeper Farley|1429|4.3,6.5|A",
+  340: "Kendor Kabonka|1453|7.7,5.2|A",
+  372: "Karm Ironquill|1432|3.7,4.7|A",
+  384: "Katie Hunter|1429|8.4,6.5|A",
+  465: "Barkeep Dobbins|1429|4.3,6.5|A",
+  491: "Quartermaster Lewis|1436|5.6,4.7|A",
+  734: "Corporal Bluth|1434|3.8,0.3|A",
+  777: "Amy Davenport|1433|2.9,4.7|A",
+  789: "Kimberly Hiett|1433|2.7,4.5|A",
+  790: "Karen Taylor|1433|2.9,4.7|A",
+  791: "Lindsay Ashlock|1433|2.8,4.7|A",
+  829: "Adlin Pridedrift|1426|3.0,7.1|A",
+  836: "Durnan Furcutter|1426|2.8,6.6|A",
+  843: "Gina MacGregor|1436|5.7,5.4|A",
+  844: "Antonio Perelli|1431|7.5,4.6|A",
+  894: "Homer Stonefield|1429|3.3,8.3|A",
+  896: "Veldan Lightfoot|1429|2.5,7.3|A",
+  954: "Kat Sampson|1432|8.2,6.4|A",
+  955: "Sergeant De Vries|1429|2.4,7.3|A",
+  958: "Dawn Brightstar|1429|6.4,6.9|A",
+  959: "Morley Eberlein|1429|6.4,6.9|A",
+  960: "Gunder Thornbush|1431|7.3,4.5|A",
+  980: "Grimnal|1435|4.5,5.0|H",
+  981: "Hartash|1435|4.5,5.1|H",
+  982: "Thultash|1435|4.6,5.4|H",
+  983: "Thultazor|1435|4.5,5.3|H",
+  984: "Thralosh|1435|4.5,5.1|H",
+  989: "Banalash|1435|4.4,5.6|H",
+  1104: "Grundel Harkin|1426|2.8,6.7|A",
+  1146: "Vharr|1434|3.2,2.8|H",
+  1147: "Hragran|1434|3.1,2.9|H",
+  1148: "Nerrist|1434|3.2,2.9|H",
+  1149: "Uthok|1434|3.1,2.8|H",
+  1198: "Rallic Finn|1429|8.3,6.6|A",
+  1213: "Godric Rothgar|1429|4.7,4.1|A",
+  1214: "Aldren Cordon|1432|6.4,6.6|A",
+  1237: "Kazan Mogosh|1426|6.8,5.4|A",
+  1238: "Gamili Frosthide|1426|4.5,5.1|A",
+  1240: "Boran Ironclink|1426|4.5,5.1|A",
+  1247: "Innkeeper Belm|1426|4.7,5.2|A",
+  1249: "Quartermaster Hudson|1429|2.5,7.4|A",
+  1250: "Drake Lindgren|1429|8.3,6.6|A",
+  1257: "Keldric Boucher|1453|6.2,7.4|A",
+  1273: "Grawn Thromwyn|1426|4.5,5.2|A",
+  1275: "Kyra Boucher|1453|6.3,7.4|A",
+  1285: "Thurman Mullby|1453|6.4,7.1|A",
+  1286: "Edna Mullby|1453|6.4,7.1|A",
+  1287: "Marda Weller|1453|6.3,6.8|A",
+  1289: "Gunther Weller|1453|6.3,6.8|A",
+  1291: "Carla Granger|1453|6.2,6.7|A",
+  1294: "Aldric Moore|1453|6.2,6.7|A",
+  1295: "Lara Moore|1453|6.2,6.7|A",
+  1296: "Felder Stover|1428|8.5,6.8|A",
+  1297: "Lina Stover|1453|5.8,6.8|A",
+  1298: "Frederick Stover|1453|5.8,6.9|A",
+  1299: "Lisbeth Schneider|1453|5.8,6.6|A",
+  1301: "Julia Gallina|1453|5.9,7.7|A",
+  1302: "Bernard Gump|1453|6.9,7.1|A",
+  1303: "Felicia Gump|1453|6.9,7.1|A",
+  1304: "Darian Singh|1453|4.2,7.6|A",
+  1305: "Jarel Moor|1453|4.1,8.2|A",
+  1307: "Charys Yserian|1453|4.4,8.6|A",
+  1308: "Owen Vaughn|1453|4.7,8.2|A",
+  1309: "Wynne Larson|1453|5.1,8.3|A",
+  1310: "Evan Larson|1453|5.2,8.3|A",
+  1311: "Joachim Brenlow|1453|5.1,9.3|A",
+  1312: "Ardwyn Cailen|1453|5.2,7.5|A",
+  1313: "Maria Lumere|1453|5.5,8.5|A",
+  1314: "Duncan Cullen|1453|5.3,8.1|A",
+  1318: "Jessara Cordell|1453|5.2,7.4|A",
+  1322: "Maxton Strang|1443|6.7,0.8|A",
+  1323: "Osric Strang|1453|7.7,6.1|A",
+  1324: "Heinrich Stone|1453|7.7,5.7|A",
+  1325: "Jasper Fel|1453|8.0,7.0|A",
+  1326: "Sloan McCoy|1453|7.8,7.0|A",
+  1328: "Elly Langston|1453|7.6,5.3|A",
+  1333: "Gerik Koen|1453|7.3,5.7|A",
+  1341: "Wilhelm Strang|1453|7.7,6.1|A",
+  1347: "Alexandra Bolero|1453|5.3,8.1|A",
+  1349: "Agustus Moulaine|1453|5.3,5.7|A",
+  1350: "Theresa Moulaine|1453|5.3,5.8|A",
+  1351: "Brother Cassius|1453|5.3,4.5|A",
+  1362: "Gothor Brumn|1432|2.4,1.8|A",
+  1381: "Krakk|1434|3.2,2.8|H",
+  1407: "|0||N",
+  1448: "Neal Allen|1437|1.0,5.6|A",
+  1450: "|0||N",
+  1452: "Gruham Rumdnul|1437|1.2,5.7|A",
+  1453: "|0||N",
+  1454: "|0||N",
+  1456: "Kersok Prond|1437|1.0,6.0|A",
+  1457: "Samor Festivus|1437|1.0,6.0|A",
+  1459: "Naela Trance|1437|1.1,5.8|A",
+  1460: "|0||N",
+  1462: "Edwina Monzor|1437|1.1,5.8|A",
+  1463: "|0||N",
+  1464: "Innkeeper Helbrek|1437|1.0,6.0|A",
+  1465: "Drac Roughcut|1432|3.5,4.9|A",
+  1469: "Vrok Blunderblast|1432|3.5,4.3|A",
+  1474: "Rann Flamespinner|1432|3.6,4.6|A",
+  1645: "Quartermaster Hicks|1429|2.5,7.3|A",
+  1650: "Terry Palin|1429|8.2,6.3|A",
+  1668: "William MacGregor|1436|5.7,5.3|A",
+  1669: "Defias Profiteer|1436|4.3,6.6|A",
+  1671: "Lamar Veisilli|1433|2.1,4.6|A",
+  1672: "Lohgan Eva|1431|7.5,4.4|A",
+  1673: "Alyssa Eva|1431|7.6,4.5|A",
+  1678: "Vernon Hale|1433|2.7,4.7|A",
+  1682: "Yanni Stoutheart|1432|3.4,4.8|A",
+  1684: "Khara Deepwater|1432|4.0,3.9|A",
+  1685: "Xandar Goodbeard|1432|8.2,6.3|A",
+  1686: "Irene Sureshot|1432|8.3,6.3|A",
+  1687: "Cliff Hadin|1432|8.3,6.3|A",
+  1690: "Thrawn Boltar|1426|4.5,5.1|A",
+  1691: "Kreg Bilmn|1426|4.7,5.2|A",
+  1692: "Golorn Frostbeard|1426|4.6,5.3|A",
+  1694: "Loslor Rudge|1426|5.0,4.9|A",
+  1697: "Keeg Gibn|1426|3.0,4.6|A",
+  1698: "Frast Dokner|1426|6.8,5.5|A",
+  2046: "Andrew Krighton|1429|4.1,6.5|A",
+  2084: "Natheril Raincaller|1452|5.1,3.0|A",
+  2113: "Archibald Kava|1420|3.2,6.5|H",
+  2115: "Joshua Kien|1420|3.2,6.5|H",
+  2116: "Blacksmith Rand|1420|3.2,6.6|H",
+  2118: "Abigail Shiel|1420|6.1,5.2|H",
+  2134: "Mrs. Winters|1420|6.1,5.2|H",
+  2136: "Oliver Dwor|1420|6.0,5.3|H",
+  2137: "Eliza Callen|1420|6.0,5.2|H",
+  2140: "Edwin Harly|1421|4.4,4.0|H",
+  2265: "Hillsbrad Apprentice Blacksmith|1424|3.2,4.5|A",
+  2303: "Lyranne Feathersong|1452|5.2,2.9|A",
+  2352: "Innkeeper Anderson|1424|5.1,5.8|A",
+  2357: "Merideth Carlson|1424|5.2,5.5|A",
+  2364: "Neema|1424|5.1,5.9|A",
+  2366: "Barkeep Kelly|1424|5.1,5.8|A",
+  2380: "Nandar Branson|1424|5.0,5.7|A",
+  2381: "Micha Yance|1424|4.9,5.5|A",
+  2383: "Lindea Rabonne|1424|5.0,6.1|A",
+  2388: "Innkeeper Shay|1424|6.2,1.9|H",
+  2393: "Christoph Jeffcoat|1424|6.2,1.9|H",
+  2394: "Mallen Swain|1424|6.2,2.0|H",
+  2397: "Derak Nightfall|1424|6.3,1.9|H",
+  2401: "Kayren Soothallow|1424|6.2,1.9|H",
+  2480: "Bro'kin|1416|3.8,3.8|N",
+  2481: "Bliztik|1431|1.8,5.4|A",
+  2482: "Zarena Cromwind|1434|2.8,7.5|N",
+  2622: "Sly Garrett|1434|2.8,7.6|N",
+  2626: "Old Man Heming|1434|2.7,7.7|N",
+  2663: "Narkk|1434|2.8,7.4|N",
+  2664: "Kelsey Yance|1434|2.8,7.4|N",
+  2668: "Danielle Zipstitch|1431|7.5,4.5|A",
+  2669: "Sheri Zipstitch|1431|7.5,4.5|A",
+  2670: "Xizk Goodstitch|1434|2.8,7.6|N",
+  2672: "Cowardly Crosby|1434|2.7,8.2|N",
+  2679: "Wenna Silkbeard|1437|2.5,2.5|A",
+  2682: "Fradd Swiftgear|1437|2.6,2.5|A",
+  2684: "Rizz Loosebolt|1416|4.7,3.5|N",
+  2685: "Mazk Snipeshot|1434|2.8,7.5|N",
+  2687: "Gnaz Blunderflame|1434|5.1,3.5|N",
+  2688: "Ruppo Zipcoil|1425|3.4,3.7|N",
+  2697: "Clyde Ranthal|1433|8.8,7.0|A",
+  2698: "George Candarte|1424|9.2,3.8|H",
+  2699: "Rikqiz|1434|2.8,7.6|N",
+  2803: "Malygen|1448|6.2,2.5|A",
+  2805: "Deneb Walker|1417|2.7,5.8|A",
+  2806: "Bale|1448|3.4,5.3|H",
+  2808: "Vikki Lonsav|1417|4.6,4.7|A",
+  2810: "Hammon Karwn|1417|4.6,4.7|A",
+  2812: "Drovnar Strongbrew|1417|4.6,4.7|A",
+  2816: "Androd Fadran|1417|4.5,4.6|A",
+  2819: "Tunkk|1417|7.4,3.4|H",
+  2820: "Graud|1417|7.4,3.2|H",
+  2821: "Keena|1417|7.4,3.2|H",
+  2832: "Nixxrax Fillamug|1434|2.7,7.7|N",
+  2838: "Crazk Sparks|1434|2.8,7.6|N",
+  2839: "Haren Kanmae|1434|2.8,7.4|N",
+  2840: "Kizz Bluntstrike|1434|2.8,7.5|N",
+  2842: "Wigcik|1434|2.8,7.6|N",
+  2843: "Jutak|1434|2.7,7.7|N",
+  2844: "Hurklor|1434|2.9,7.5|N",
+  2845: "Fargon Mortalak|1434|2.9,7.5|N",
+  2846: "Blixrez Goodstitch|1434|2.8,7.7|N",
+  2847: "Jansen Underwood|1434|2.9,7.5|N",
+  2848: "Glyx Brewright|1434|2.8,7.8|N",
+  2849: "Qixdi Goodstitch|1434|2.8,7.7|N",
+  2908: "Thorkaf Dragoneye|1418|6.2,5.7|H",
+  2997: "Jyn Stonehoof|1456|4.1,6.2|H",
+  2999: "Taur Stonehoof|1456|4.0,5.5|H",
+  3000: "Gibbert|1449|4.4,0.7|N",
+  3002: "Kurm Stonehoof|1456|3.4,5.7|H",
+  3005: "Mahu|1456|4.3,4.4|H",
+  3010: "Mani Winterhoof|1456|4.7,3.4|H",
+  3012: "Nata Dawnstrider|1456|4.5,3.9|H",
+  3014: "Nida Winterhoof|1456|4.9,3.9|H",
+  3015: "Kuna Thunderhorn|1456|4.6,4.5|H",
+  3017: "Nan Mistrunner|1456|4.7,4.2|H",
+  3018: "Hogor Thunderhoof|1456|5.5,5.6|H",
+  3021: "Kard Ragetotem|1456|5.3,5.6|H",
+  3027: "Naal Mistrunner|1456|5.1,5.2|H",
+  3029: "Sewa Mistrunner|1456|5.5,4.7|H",
+  3072: "Kawnie Softbreeze|1412|4.5,7.6|H",
+  3074: "Varia Hardhide|1412|4.4,7.7|H",
+  3075: "Bronk Steelrage|1412|4.4,7.7|H",
+  3076: "Moorat Longstride|1412|4.5,5.7|H",
+  3077: "Mahnott Roughwound|1412|4.5,5.8|H",
+  3079: "Varg Windwhisper|1412|4.5,5.8|H",
+  3081: "Wunna Darkmane|1412|4.6,5.8|H",
+  3085: "Gloria Femmel|1433|2.6,4.3|A",
+  3086: "Gretchen Vogel|1433|2.2,4.4|A",
+  3088: "Henry Chapal|1433|2.3,4.1|A",
+  3090: "Gerald Crawley|1433|2.5,4.1|A",
+  3091: "Franklin Hamar|1433|2.7,4.5|A",
+  3092: "Tagain|1456|4.3,4.4|H",
+  3093: "Grod|1456|4.2,4.3|H",
+  3095: "Fela|1456|4.2,4.4|H",
+  3096: "Captured Servant of Azora|1433|7.4,7.9|A",
+  3097: "Bernard Brubaker|1433|8.8,7.1|A",
+  3133: "Herble Baubbletump|1431|7.7,4.8|A",
+  3134: "Kzixx|1431|8.1,1.9|N",
+  3135: "Malissa|1431|7.9,4.4|A",
+  3158: "Duokna|1411|4.2,6.7|H",
+  3160: "Huklah|1411|4.0,6.7|H",
+  3161: "Rarc|1411|4.0,6.7|H",
+  3163: "Uhgar|1411|5.2,4.0|H",
+  3164: "Jark|1411|5.4,4.2|H",
+  3165: "Ghrawt|1411|5.3,4.1|H",
+  3166: "Cutac|1411|5.3,4.0|H",
+  3167: "Wuark|1411|5.2,4.1|H",
+  3168: "Flakk|1411|5.2,4.2|H",
+  3178: "|0||N",
+  3180: "Dark Iron Entrepreneur|1437|4.6,1.8|A",
+  3186: "K'waii|1411|5.6,7.3|H",
+  3187: "Tai'tasi|1411|5.6,7.3|H",
+  3298: "Gabrielle Chase|1428|8.4,6.7|A",
+  3313: "Trak'gen|1454|4.8,8.0|H",
+  3314: "Urtharo|1454|4.7,6.8|H",
+  3315: "Tor'phan|1454|6.2,5.0|H",
+  3316: "Handor|1454|6.2,4.4|H",
+  3317: "Ollanus|1454|5.6,7.3|H",
+  3319: "Sana|1454|5.5,7.3|H",
+  3321: "Morgum|1454|5.6,7.3|H",
+  3322: "Kaja|1454|5.2,6.2|H",
+  3323: "Horthus|1454|4.5,5.6|H",
+  3331: "Kareth|1454|4.5,5.5|H",
+  3333: "Shankys|1454|6.9,2.9|H",
+  3334: "Rekkul|1454|4.2,4.9|H",
+  3335: "Hagrus|1454|4.6,4.6|H",
+  3342: "Shan'ti|1454|3.7,5.2|H",
+  3346: "Kithas|1454|5.3,3.8|H",
+  3348: "Kor'geld|1454|5.6,3.4|H",
+  3350: "Asoran|1454|4.6,4.0|H",
+  3351: "Magenius|1454|4.5,4.0|H",
+  3356: "Sumi|1454|8.2,2.3|H",
+  3358: "Gorina|1454|7.3,2.6|H",
+  3361: "Shoma|1454|8.1,1.9|H",
+  3364: "Borya|1454|6.3,5.1|H",
+  3366: "Tamar|1454|6.3,4.5|H",
+  3367: "Felika|1454|5.3,5.7|H",
+  3400: "Xen'to|1454|5.7,5.3|H",
+  3405: "Zeal'aya|1454|5.5,3.9|H",
+  3409: "Zendo'jian|1454|8.1,1.9|H",
+  3410: "Jin'sora|1454|7.7,3.8|H",
+  3411: "Denni'ka|1442|7.3,9.5|H",
+  3413: "Sovik|1454|7.5,2.5|H",
+  3477: "Hraq|1413|5.1,2.9|H",
+  3479: "Nargal Deatheye|1413|5.1,2.9|H",
+  3481: "Barg|1413|5.1,3.0|H",
+  3482: "Tari'qa|1413|5.1,3.0|H",
+  3483: "Jahan Hawkwing|1413|5.1,2.9|H",
+  3485: "Wrahk|1413|5.2,3.1|H",
+  3486: "Halija Whitestrider|1413|5.2,3.1|H",
+  3488: "Uthrok|1413|5.1,2.9|H",
+  3490: "Hula'mahi|1413|5.1,3.0|H",
+  3492: "Vexspindle|1413|6.2,3.8|N",
+  3495: "Gagsprocket|1413|6.2,3.6|N",
+  3497: "Kilxx|1413|6.2,3.8|N",
+  3498: "Jazzik|1413|6.1,3.8|N",
+  3499: "Ranik|1413|6.1,3.8|N",
+  3500: "Tarhus|1444|7.4,4.4|H",
+  3522: "Constance Brisboise|1420|5.2,5.5|H",
+  3528: "Pyrewood Armorer|1421|4.6,7.2|A",
+  3529: "Moonrage Armorer|1421|4.6,7.2|A",
+  3530: "Pyrewood Tailor|1421|4.7,7.2|A",
+  3534: "Wallace the Blind|1421|4.6,8.6|H",
+  3536: "Kris Legace|1424|8.0,3.9|N",
+  3537: "Zixil|1424|6.0,1.9|N",
+  3539: "Ott|1424|6.0,2.6|H",
+  3540: "Hal McAllister|1424|4.9,6.2|A",
+  3541: "Sarah Raycroft|1424|4.9,5.5|A",
+  3542: "Jaysin Lanyda|1424|5.0,5.9|A",
+  3546: "Bernie Heisten|1419|6.3,1.6|A",
+  3548: "Selina Weston|1420|6.1,5.0|H",
+  3550: "Martine Tramblay|1420|6.5,5.9|H",
+  3551: "Patrice Dwyer|1421|4.3,4.1|H",
+  3552: "Alexandre Lefevre|1421|4.4,3.9|H",
+  3553: "Sebastian Meloche|1421|4.3,4.1|H",
+  3554: "Andrea Boynton|1421|4.4,3.9|H",
+  3556: "Andrew Hilbert|1421|4.3,4.0|H",
+  3561: "Kyrai|1457|3.2,1.9|A",
+  3562: "Alaindia|1457|3.8,4.4|A",
+  3572: "Zizzek|1413|6.2,3.9|N",
+  3577: "Dalaran Brewmaster|1421|6.2,6.4|N",
+  3578: "Dalaran Miner|1421|6.2,6.2|N",
+  3587: "Lyrai|1438|5.9,4.1|A",
+  3589: "Keina|1438|5.9,4.1|A",
+  3590: "Janna Brightmoon|1438|5.9,4.1|A",
+  3592: "Andiss|1438|5.8,3.9|A",
+  3608: "Aldia|1438|5.5,5.7|A",
+  3609: "Shalomon|1438|5.6,5.9|A",
+  3610: "Jeena Featherbow|1438|5.5,5.9|A",
+  3611: "Brannol Eaglemoon|1438|5.6,6.0|A",
+  3613: "Meri Ironweave|1438|5.6,5.9|A",
+  3614: "Narret Shadowgrove|1438|5.5,5.7|A",
+  3621: "Kurll|1447|2.1,5.2|H",
+  3658: "Lizzarik|1413|6.1,3.8|N",
+  3682: "Vrang Wildgore|1413|4.3,1.2|H",
+  3683: "Kiknikle|1413|4.1,3.8|H",
+  3684: "Pizznukle|1413|4.1,3.8|H",
+  3685: "Harb Clawhoof|1412|4.7,5.8|H",
+  3689: "Laer Stepperunner|1441|2.1,3.1|H",
+  3700: "Jadenvis Seawatcher|1444|3.0,4.2|A",
+  3708: "Gruna|1428|6.5,2.4|H",
+  3779: "Syurana|1452|5.1,2.9|A",
+  3881: "Grimtak|1411|5.1,4.2|H",
+  3882: "Zlagk|1411|4.2,6.7|H",
+  3883: "Moodan Sungrain|1412|4.4,7.7|H",
+  3884: "Jhawna Oatwind|1412|4.7,6.1|H",
+  3934: "Innkeeper Boorand Plainswind|1413|5.2,2.9|H",
+  3937: "Kira Songshine|1429|3.9,5.6|A",
+  3951: "Bhaldaran Ravenshade|1440|5.0,6.7|A",
+  3952: "Aeolynn|1440|3.4,4.9|A",
+  3953: "Tandaan Lightmane|1440|3.4,4.9|A",
+  3954: "Dalria|1440|3.5,5.2|A",
+  3955: "Shandrina|1440|4.9,6.7|A",
+  3956: "Harklan Moongrove|1440|5.0,6.7|A",
+  3958: "Lardan|1440|3.4,4.9|A",
+  3959: "Nantar|1440|3.7,4.9|A",
+  3961: "Maliynn|1440|3.6,4.9|A",
+  3962: "Haljan Oakheart|1440|3.4,5.0|A",
+  3969: "Fahran Silentblade|1440|3.6,4.9|A",
+  3970: "Llana|1440|3.5,4.8|A",
+  4043: "Galthuk|1454|8.2,1.8|H",
+  4082: "Grawnal|1442|4.5,5.8|H",
+  4083: "Jeeda|1442|4.7,6.1|H",
+  4084: "Chylina|1442|3.5,0.6|A",
+  4085: "Nizzik|1442|6.2,4.0|N",
+  4086: "Veenix|1442|5.8,5.1|N",
+  4164: "Cylania|1457|5.9,4.6|A",
+  4167: "Dendrythis|1457|3.8,2.0|A",
+  4168: "Elynna|1457|6.4,2.1|A",
+  4169: "Jaeana|1457|6.2,5.8|A",
+  4170: "Ellandrieth|1457|6.4,5.3|A",
+  4171: "Merelyssa|1457|6.5,6.0|A",
+  4172: "Anadyia|1457|5.5,8.9|A",
+  4173: "Landria|1457|6.3,6.6|A",
+  4175: "Vinasia|1457|6.0,7.2|A",
+  4177: "Melea|1457|5.7,7.7|A",
+  4180: "Ealyshia Dewwhisper|1457|6.0,7.2|N",
+  4181: "Fyrenna|1457|6.9,4.4|A",
+  4182: "Dalmond|1439|3.7,4.0|A",
+  4183: "Naram Longclaw|1439|3.7,4.0|A",
+  4185: "Shaldyn|1439|3.8,4.0|A",
+  4186: "Mavralyn|1439|3.7,4.1|A",
+  4187: "Harlon Thornguard|1439|3.7,4.1|A",
+  4188: "Illyanie|1442|3.5,0.7|A",
+  4189: "Valdaron|1439|3.8,4.0|A",
+  4190: "Kyndri|1439|3.6,4.4|A",
+  4191: "Allyndia|1439|3.7,4.3|A",
+  4192: "Taldan|1439|3.6,4.3|A",
+  4194: "Ullanna|1439|4.3,7.6|A",
+  4195: "Tiyani|1439|4.3,7.6|A",
+  4200: "Laird|1439|3.6,4.4|A",
+  4203: "Ariyell Skyshadow|1457|5.8,4.4|A",
+  4216: "Chardryn|1457|4.8,6.9|A",
+  4220: "Cyroen|1457|3.4,0.9|A",
+  4221: "Talaelar|1457|4.7,5.7|A",
+  4222: "Voloren|1457|4.7,5.6|A",
+  4223: "Fyldan|1457|4.8,2.1|A",
+  4225: "Saenorion|1457|6.3,2.2|A",
+  4226: "Ulthir|1457|5.5,2.4|A",
+  4228: "Vaean|1457|5.8,1.4|A",
+  4229: "Mythrin'dir|1457|6.1,1.8|A",
+  4231: "Kieran|1457|6.5,6.0|A",
+  4235: "Turian|1457|6.2,6.5|A",
+  4236: "Cyridan|1457|5.3,8.0|A",
+  4241: "Mydrannul|1457|7.0,4.5|A",
+  4256: "Golnir Bouldertoe|1455|5.1,2.6|A",
+  4259: "Thurgrum Deepforge|1455|5.1,4.2|A",
+  4265: "Nyoma|1438|5.7,6.1|A",
+  4266: "Danlyia|1438|5.5,5.7|A",
+  4305: "Kriggon Talsone|1436|3.6,9.0|A",
+  4307: "Heldan Galesong|1439|3.7,5.6|A",
+  4553: "Ronald Burch|1458|6.2,4.3|H",
+  4554: "Tawny Grisette|1458|6.5,4.9|H",
+  4555: "Eleanor Rusk|1458|6.9,4.8|H",
+  4556: "Gordon Wendham|1458|6.1,4.1|H",
+  4557: "Louis Warren|1458|6.1,4.1|H",
+  4558: "Lauren Newcomb|1458|6.4,3.8|H",
+  4559: "Timothy Weldon|1458|6.2,3.9|H",
+  4560: "Walter Ellingson|1458|6.2,3.9|H",
+  4561: "Daniel Bartlett|1458|6.4,3.7|H",
+  4562: "Thomas Mordan|1458|6.9,3.9|H",
+  4569: "Charles Seaton|1458|7.7,5.0|H",
+  4571: "Morley Bates|1458|7.7,3.2|H",
+  4574: "Lizbeth Cromwell|1458|8.1,3.0|H",
+  4575: "Hannah Akeley|1458|8.2,1.6|H",
+  4577: "Millie Gregorian|1458|7.0,2.9|H",
+  4580: "Lucille Castleton|1458|7.1,2.9|H",
+  4585: "Ezekiel Graves|1458|7.5,5.1|H",
+  4587: "Elizabeth Van Talen|1458|7.5,7.3|H",
+  4589: "Joseph Moore|1458|7.0,5.8|H",
+  4592: "Nathaniel Steenwick|1458|7.7,5.0|H",
+  4597: "Samuel Van Brunt|1458|6.1,2.9|H",
+  4599: "Sarah Killian|1458|5.6,3.6|H",
+  4600: "Geoffrey Hartwell|1458|5.8,3.2|H",
+  4602: "Benijah Fenner|1458|5.8,3.2|H",
+  4604: "Abigail Sawyer|1458|5.4,3.8|H",
+  4610: "Algernon|1458|5.1,7.4|H",
+  4615: "Katrina Alliestar|1458|5.4,4.9|H",
+  4617: "Thaddeus Webb|1458|6.2,6.0|H",
+  4730: "Lelanai|1457|3.8,1.5|A",
+  4775: "Felicia Doan|1458|6.4,5.0|H",
+  4782: "Truk Wildbeard|1425|1.4,4.2|A",
+  4875: "Turhaw|1441|4.5,5.1|H",
+  4876: "|0||N",
+  4877: "Jandia|1441|4.6,5.1|H",
+  4878: "Montarr|1441|4.5,5.0|H",
+  4879: "Ogg'marr|1445|3.6,3.1|H",
+  4883: "Krak|1445|3.6,3.0|H",
+  4884: "Zulrg|1445|3.6,3.1|H",
+  4885: "Gregor MacVince|1445|6.5,5.1|A",
+  4886: "Hans Weston|1445|6.4,5.0|A",
+  4888: "Marie Holdston|1445|6.4,5.0|A",
+  4890: "Piter Verance|1445|6.7,4.7|A",
+  4891: "Dwane Wertle|1445|6.8,4.7|A",
+  4892: "Jensen Farran|1445|6.7,4.9|A",
+  4893: "Bartender Lillian|1445|6.6,4.5|A",
+  4896: "Charity Mipsy|1445|6.7,5.1|A",
+  4897: "Helenia Olden|1445|6.6,5.1|A",
+  4899: "Uma Bartulm|1445|6.4,4.7|A",
+  4981: "Ben Trias|1453|6.6,7.3|A",
+  5100: "Fillius Fizzlespinner|1455|3.8,7.3|A",
+  5101: "Bryllia Ironbrand|1455|3.9,7.3|A",
+  5102: "Dolman Steelfury|1455|3.6,6.6|A",
+  5103: "Grenil Steelfury|1455|3.6,6.5|A",
+  5106: "Bromiir Ormsen|1455|3.1,5.7|A",
+  5107: "Mangorn Flinthammer|1455|3.2,5.8|A",
+  5108: "Raena Flinthammer|1455|3.2,5.8|A",
+  5110: "Barim Jurgenstaad|1455|1.9,5.6|A",
+  5111: "Innkeeper Firebrew|1455|1.8,5.1|A",
+  5112: "Gwenna Firebrew|1455|1.8,5.1|A",
+  5120: "Brenwyn Wintersteel|1455|6.1,8.8|A",
+  5122: "Skolmin Goldfury|1455|7.1,6.6|A",
+  5125: "Dolkin Craghelm|1455|5.4,8.8|A",
+  5126: "Olthran Craghelm|1455|5.4,8.7|A",
+  5128: "Bombus Finespindle|1455|3.9,3.4|A",
+  5129: "Lissyphus Finespindle|1455|5.4,8.8|A",
+  5133: "Harick Boulderdrum|1455|2.2,1.6|A",
+  5138: "Gwina Stonebranch|1455|5.5,5.8|A",
+  5140: "Edris Barleybeard|1455|7.2,7.6|A",
+  5151: "Ginny Longberry|1455|3.1,2.7|A",
+  5154: "Poranna Snowbraid|1455|4.3,2.8|A",
+  5155: "Ingrys Stonebrow|1455|3.8,0.5|A",
+  5156: "Maeva Snowbraid|1455|3.8,0.5|A",
+  5158: "Tilli Thistlefuzz|1455|6.0,4.4|A",
+  5160: "Emrul Riknussun|1455|5.9,3.7|A",
+  5162: "Tansy Puddlefizz|1455|4.7,0.6|A",
+  5163: "Burbik Gearspanner|1455|4.6,2.7|A",
+  5169: "Tynnus Venomsprout|1455|5.2,1.3|A",
+  5170: "Hjoldir Stoneblade|1455|4.5,0.6|A",
+  5175: "Gearcutter Cogspinner|1455|6.7,4.3|A",
+  5178: "Soolie Berryfizz|1455|6.6,5.4|A",
+  5411: "Krinkle Goodsteel|1446|5.1,2.8|N",
+  5483: "Erika Tate|1453|7.8,5.2|A",
+  5494: "Catherine Leland|1453|5.5,6.9|A",
+  5503: "Eldraeith|1453|5.5,8.5|A",
+  5508: "Strumner Flintheel|1419|6.6,1.7|A",
+  5512: "Kaita Deepforge|1453|6.3,3.7|A",
+  5514: "Brooke Stonebraid|1453|5.9,3.7|A",
+  5519: "Billibub Cogspinner|1453|6.2,3.0|A",
+  5520: "Spackle Thornberry|1453|3.9,8.4|A",
+  5565: "Jillian Tanner|1453|7.1,6.2|A",
+  5569: "Fizzlebang Booms|1455|7.3,5.3|A",
+  5570: "Bruuk Barleybeard|1455|7.2,7.6|A",
+  5594: "Alchemist Pestlezugg|1446|5.0,2.7|N",
+  5611: "Barkeep Morag|1454|5.4,6.8|H",
+  5620: "Bartender Wental|1433|2.6,4.4|A",
+  5688: "Innkeeper Renee|1420|6.1,5.2|H",
+  5749: "Kayla Smithe|1420|3.0,6.6|H",
+  5750: "Gina Lang|1420|6.1,5.2|H",
+  5753: "Martha Strain|1458|8.5,1.5|H",
+  5754: "Zane Bradford|1458|7.0,2.7|H",
+  5757: "Lilly|1421|4.3,5.0|H",
+  5758: "Leo Sarn|1421|5.4,8.2|H",
+  5812: "Tumi|1454|8.2,2.3|H",
+  5814: "Innkeeper Thulbek|1434|3.1,2.9|H",
+  5815: "Kurgul|1454|4.7,4.6|H",
+  5816: "Katis|1454|4.4,4.8|H",
+  5817: "Shimra|1454|4.8,8.0|H",
+  5819: "Mirelle Tremayne|1458|6.1,2.8|H",
+  5820: "Gillian Moore|1458|7.0,5.8|H",
+  5821: "Sheldon Von Croy|1458|7.0,2.8|H",
+  5871: "Larhka|1413|5.2,2.9|H",
+  5940: "Harn Longcast|1412|4.7,5.5|H",
+  5942: "Zansoa|1411|5.6,7.3|H",
+  5944: "Yonada|1413|4.5,5.9|H",
+  6027: "Kitha|1411|5.4,4.1|H",
+  6028: "Burkrum|1440|7.3,6.0|H",
+  6091: "Dellylah|1438|5.9,4.0|A",
+  6272: "Innkeeper Janene|1445|6.6,4.5|A",
+  6298: "Thelgrum Stonehammer|1439|3.8,4.1|A",
+  6300: "Elisa Steelhand|1439|3.8,4.1|A",
+  6301: "Gorbold Steelhand|1439|3.8,4.1|A",
+  6328: "Dannie Fizzwizzle|1426|4.7,5.3|A",
+  6367: "Donni Anthania|1429|4.4,5.3|A",
+  6373: "Dane Winslow|1429|5.0,4.2|A",
+  6374: "Cylina Darkheart|1429|4.4,6.6|A",
+  6376: "Wren Darkspring|1426|2.8,6.6|A",
+  6382: "Jubahl Corpseseeker|1455|5.3,0.6|A",
+  6495: "Riznek|1441|8.0,7.6|N",
+  6567: "Ghok'kah|1445|3.5,3.0|H",
+  6568: "Vizzklick|1446|5.1,2.7|N",
+  6574: "Jun'ha|1417|7.2,3.6|H",
+  6576: "Brienna Starglow|1444|8.9,4.5|A",
+  6727: "Innkeeper Brianna|1433|2.6,4.4|A",
+  6730: "Jinky Twizzlefixxit|1441|7.7,7.7|N",
+  6731: "Harlown Darkweave|1440|1.8,6.0|A",
+  6734: "Innkeeper Hearthstove|1432|3.5,4.8|A",
+  6735: "Innkeeper Saelienne|1457|6.7,1.5|A",
+  6736: "Innkeeper Keldamyr|1438|5.5,5.9|A",
+  6739: "Innkeeper Bates|1421|4.3,4.1|H",
+  6740: "Innkeeper Allison|1453|6.0,7.5|A",
+  6746: "Innkeeper Pala|1456|4.5,6.4|H",
+  6747: "Innkeeper Kauth|1412|4.6,6.1|H",
+  6777: "Zan Shivsproket|1416|8.6,8.0|N",
+  6779: "Smudge Thunderwood|1416|8.6,7.9|N",
+  6790: "Innkeeper Trelayne|1431|7.3,4.4|A",
+  6791: "Innkeeper Wiley|1413|6.2,3.9|N",
+  6807: "Innkeeper Skindle|1434|2.7,7.7|N",
+  6928: "Innkeeper Grosk|1411|5.1,4.1|H",
+  7485: "Nargatt|1434|3.2,2.9|H",
+  7714: "Innkeeper Byula|1413|4.5,5.9|H",
+  7731: "Innkeeper Jayka|1442|4.7,6.2|H",
+  7737: "Innkeeper Greul|1444|7.4,4.5|H",
+  7744: "Innkeeper Thulfram|1425|1.3,4.1|A",
+  7852: "Pratt McGrubben|1444|3.0,4.2|A",
+  7854: "Jangdor Swiftstrider|1444|7.4,4.2|H",
+  7940: "Darnall|1450|5.1,3.3|N",
+  7941: "Mardrack Greenwell|1444|3.1,4.3|A",
+  7942: "Faralorn|1444|3.0,4.3|A",
+  7943: "Harklane|1444|3.1,4.6|A",
+  7945: "Savanne|1444|3.1,4.6|A",
+  7947: "Vivianna|1444|3.1,4.3|A",
+  7952: "Zjolnir|1411|5.5,7.5|H",
+  7955: "Milli Featherwhistle|1426|4.9,4.8|A",
+  7976: "Thalgus Thunderfist|1455|6.1,8.9|A",
+  7978: "Bimble Longberry|1455|3.6,1.6|A",
+  8116: "|0||N",
+  8117: "|0||N",
+  8118: "|0||N",
+  8121: "|0||N",
+  8122: "|0||N",
+  8125: "Dirge Quikcleave|1446|5.2,2.8|N",
+  8129: "Wrinkle Goodsteel|1446|5.0,2.7|N",
+  8137: "Gikkix|1446|6.6,2.2|N",
+  8139: "Jabbey|1446|6.7,2.2|N",
+  8143: "Loorana|1444|7.5,4.3|H",
+  8145: "Sheendra Tallgrass|1444|7.4,4.2|H",
+  8150: "Janet Hommers|1443|6.6,0.6|A",
+  8152: "Harnor|1443|5.1,5.3|H",
+  8157: "Logannas|1444|3.2,4.4|A",
+  8158: "|0||N",
+  8159: "Worb Strongstitch|1444|7.4,4.2|H",
+  8160: "Nioma|1425|1.3,4.3|A",
+  8161: "Harggan|1425|1.3,4.4|A",
+  8176: "Gharash|1435|4.5,5.1|H",
+  8177: "Rartar|1435|4.5,5.7|H",
+  8178: "Nina Lightbrew|1419|6.6,1.8|A",
+  8305: "Kixxle|1437|5.0,3.7|N",
+  8307: "Tarban Hearthgrain|1413|5.5,3.2|H",
+  8358: "Hewa|1456|4.5,5.6|H",
+  8359: "Ahanu|1456|4.5,5.5|H",
+  8360: "Elki|1456|4.5,5.6|H",
+  8361: "Chepi|1456|4.1,5.4|H",
+  8362: "Kuruk|1456|3.9,6.4|H",
+  8363: "Shadi Mistrunner|1456|4.0,6.3|H",
+  8398: "Ohanko|1456|5.3,5.7|H",
+  8404: "Xan'tish|1454|3.7,7.6|H",
+  8508: "Gretta Ganter|1426|3.1,4.4|A",
+  8678: "Jubie Gadgetspring|1447|4.5,9.0|N",
+  8679: "Knaz Blunderflame|1434|5.1,3.5|N",
+  8681: "Outfitter Eric|1455|4.3,2.9|A",
+  8931: "Innkeeper Heather|1436|5.2,5.3|A",
+  8934: "Christopher Hewen|1436|5.2,5.2|A",
+  9179: "Jazzrik|1418|4.2,5.2|N",
+  9356: "|0||N",
+  9501: "Innkeeper Adegwa|1417|7.3,3.2|H",
+  9544: "Yuka Screwspigot|1428|6.6,2.2|N",
+  9548: "Cawind Trueaim|1444|7.4,4.5|H",
+  9549: "Borand|1442|4.5,5.9|H",
+  9551: "Starn|1441|4.5,5.0|H",
+  9552: "Zanara|1445|3.5,3.0|H",
+  9553: "Nadia Vernon|1421|4.5,3.9|H",
+  9555: "Mu'uta|1417|7.2,3.3|H",
+  9636: "Kireena|1443|5.1,5.3|H",
+  10118: "Nessa Shadowsong|1438|5.6,9.2|A",
+  10293: "Dulciea Frostmoon|1444|3.0,4.3|A",
+  10361: "Gruul Darkblade|1447|2.2,5.1|H",
+  10369: "Trayexir|1411|5.6,7.3|H",
+  10380: "Sanuye Runetotem|1413|4.5,5.9|H",
+  11038: "Caretaker Alen|1423|6.9,5.3|N",
+  11103: "Innkeeper Lyshaerya|1443|6.6,0.6|A",
+  11106: "Innkeeper Sikewa|1443|2.4,6.8|H",
+  11116: "Innkeeper Abeqwa|1441|4.6,5.1|H",
+  11118: "Innkeeper Vizzie|1452|6.1,3.8|N",
+  11137: "Xai'ander|1440|3.5,5.2|A",
+  11182: "Nixxrak|1452|6.1,3.7|N",
+  11183: "Blixxrak|1452|6.1,3.7|N",
+  11184: "Wixxrak|1452|6.1,3.8|N",
+  11185: "Xizzer Fizzbolt|1452|6.0,3.8|N",
+  11186: "Lunnix Sprocketslip|1452|6.1,3.8|N",
+  11187: "Himmik|1452|6.1,3.9|N",
+  11188: "Evie Whirlbrew|1452|6.0,3.7|N",
+  11189: "Qia|1452|6.1,3.7|N",
+  11287: "Baker Masterson|1422|6.9,7.9|N",
+  11555: "Gorn One Eye|1448|6.5,0.2|N",
+  11557: "|0||N",
+  11703: "Graw Cornerstone|1427|4.1,7.4|A",
+  11874: "Masat T'andr|1435|2.6,3.1|N",
+  12019: "Dargon|1450|4.8,3.9|N",
+  12021: "Daeolyn Summerleaf|1450|4.5,3.4|N",
+  12022: "Lorelae Wintersong|1450|4.8,4.0|N",
+  12023: "Kharedon|1450|5.6,3.0|N",
+  12024: "Meliri|1450|5.1,4.2|N",
+  12026: "My'lanna|1450|4.4,3.4|N",
+  12027: "Tukk|1443|2.5,7.1|H",
+  12028: "Lah'Mawhani|1443|2.3,7.1|H",
+  12029: "Narianna|1450|5.3,4.2|N",
+  12031: "Mai'Lahii|1443|2.2,7.2|H",
+  12033: "Wulan|1443|2.6,6.9|H",
+  12043: "Kulwia|1442|4.5,5.9|H",
+  12245: "Vendor-Tron 1000|1443|6.0,3.8|N",
+  12246: "Super-Seller 680|1443|4.0,7.9|N",
+  12776: "Hraug|1411|4.0,6.8|H",
+  12799: "Sergeant Ba'sha|1454|4.1,6.8|H",
+  12805: "Officer Areyn|1453|7.6,6.5|A",
+  12807: "Greshka|1435|4.8,5.5|H",
+  12941: "Jase Farlane|1423|7.0,4.8|N",
+  12942: "Leonard Porter|1422|4.3,8.4|A",
+  12943: "Werg Thickblade|1420|8.3,6.9|H",
+  12956: "Zannok Hidepiercer|1451|8.1,1.7|N",
+  12957: "Blimo Gadgetspring|1447|4.5,9.0|N",
+  12958: "Gigget Zipcoil|1425|3.4,3.8|N",
+  12959: "Nergal|1449|4.3,0.7|N",
+  12960: "Christi Galvanis|1443|6.6,0.6|A",
+  12962: "Wik'Tar|1440|1.1,3.4|H",
+  13476: "Balai Lok'Wein|1445|3.6,3.0|H",
+  14301: "Brinna Valanaar|1447|1.2,7.8|A",
+  14337: "|0||N",
+  14624: "Master Smith Burninate|1427|3.8,2.8|N",
+  14637: "Zorbin Fandazzle|1444|4.4,4.3|N",
+  14731: "Lard|1425|7.8,8.1|H",
+  14737: "Smith Slagtree|1425|7.7,8.0|H",
+  14738: "Otho Moji'ko|1425|7.9,7.9|H",
+  14739: "Mystic Yayo'jin|1425|7.8,7.8|H",
+  14740: "|0||N",
+  14961: "Mirvyna Jinglepocket|1416|4.0,8.0|N",
+  14962: "Dillord Copperpinch|1416|6.2,5.8|H",
+  14963: "Gapp Jinglepocket|1440|6.2,8.2|A",
+  14964: "Hecht Copperpinch|1413|4.6,0.8|H",
+  15011: "|0||N",
+  15012: "|0||N",
+  15124: "Targot Jinglepocket|1417|4.6,4.5|A",
+  15125: "Kosco Copperpinch|1417|7.4,2.9|N",
+  15126: "Rutherford Twing|1417|7.3,2.9|H",
+  15127: "Samuel Hawke|1417|4.6,4.5|A",
+  15174: "Calandrath|1451|5.1,3.9|N",
+  15175: "Khur Hornstriker|1451|4.8,3.7|N",
+  15315: "Mylini Frostmoon|1448|6.2,2.5|A",
+  16458: "Innkeeper Faralia|1442|3.5,0.5|A",
+  17598: "Renn'az|1425|7.6,8.1|H",
+};
+/* [物品ID, 英文名, 买价(铜), 图标名, "商人ID,商人ID", 是否本插件材料] */
+const SHOP_GOODS = [
+  [18776, "Swift Palomino", 10000000, "ability_mount_ridinghorse", "384,2357,4885", 0],
+  [18793, "Great White Kodo", 10000000, "ability_mount_kodo_01", "3685", 0],
+  [18790, "Swift Orange Raptor", 10000000, "ability_mount_raptor", "7952", 0],
+  [5656, "Brown Horse Bridle", 800000, "ability_mount_ridinghorse", "384,1460,2357,4885", 0],
+  [8629, "Reins of the Striped Nightsaber", 800000, "ability_mount_blackpanther", "4730", 0],
+  [8563, "Red Mechanostrider", 800000, "ability_mount_mechastrider", "7955", 0],
+  [20070, "Sageclaw", 442362, "inv_sword_13", "15127", 0],
+  [20068, "Deathguard's Cloak", 131769, "inv_misc_cape_02", "15126", 0],
+  [12252, "Staff of Protection", 63095, "inv_staff_07", "2482", 0],
+  [2528, "Falchion", 51836, "inv_sword_34", "981,1296,1324,1407,2843,3000,3021,3331,3361,4171,4600,5120,5170,10361,11184,12024,15315", 0],
+  [2425, "Brigandine Leggings", 43077, "inv_pants_03", "980,1323,1349,3095,4177,5126,5508,5812,5819,8129,11182", 0],
+  [20092, "Highlander's Chain Greaves", 36875, "inv_boots_chain_02", "15127", 0],
+  [2521, "Flamberge", 30896, "inv_sword_26", "1146,1333,1645,2482,2843,3000,4043,4180,4600,4884,4888,5120,5170,8398,11137,15315", 0],
+  [18256, "Imbued Vial", 30000, "inv_drink_06", "844,958,983,1257,1313,1453,2380,2480,2481,2812,2848,3010,3014,3348,3548,3956,4226,4610,4899,5178,5594,8157,8158,8177,8178,8305,11188", 1],
+  [16486, "First Sergeant's Silk Cuffs", 28477, "inv_bracer_07", "12799", 0],
+  [8094, "Platemail Armor", 27290, "inv_chest_plate04", "980,1323,1349,3095,5126,5508,8129,11182", 0],
+  [2520, "Broadsword", 24628, "inv_sword_05", "1146,1324,1645,2482,2843,3000,3021,3331,3361,4171,4600,4884,4888,5120,5170,11137,15315", 0],
+  [3892, "Embroidered Hat", 21940, "inv_helmet_33", "984,1310,1314,2849,3316,4175,5129,5155,5821,10293,11183,12023", 0],
+  [8092, "Platemail Helm", 20312, "inv_helmet_03", "980,1323,1349,3095,5126,5508,8129,11182", 0],
+  [13949, "Recipe: Baked Salmon", 20000, "inv_scroll_03", "7947,8145", 0],
+  [11306, "Sturdy Recurve", 19467, "inv_weapon_bow_07", "1298,3015,3410,4173,4604,5122", 0],
+  [4824, "Blurred Axe", 16856, "inv_axe_14", "1307,3180,3539,4890", 0],
+  [18656, "Schematic: Powerful Seaforium Charge", 16000, "inv_scroll_03", "11185", 0],
+  [4826, "Marauder Axe", 15436, "inv_axe_23", "1307,3180,3539,4890", 0],
+  [18834, "Insignia of the Horde", 15000, "inv_jewelry_trinketpvp_02", "12799", 0],
+  [18864, "Insignia of the Alliance", 15000, "inv_jewelry_trinketpvp_01", "12805", 0],
+  [16355, "Grimoire of Sacrifice (Rank 5)", 14000, "inv_misc_book_06", "5520,5750,5753,5815,6027,6328,6374,6382,12807", 0],
+  [20093, "Highlander's Chain Greaves", 13217, "inv_boots_chain_02", "15127", 0],
+  [16110, "Recipe: Monster Omelet", 12000, "inv_scroll_03", "2803,2806,11187", 0],
+  [14472, "Pattern: Runecloth Cloak", 12000, "inv_scroll_03", "7940", 0],
+  [2617, "Burning Robes", 10991, "inv_chest_cloth_40", "1309,1350,3092,3315,4172,4580,5156", 0],
+  [9301, "Recipe: Elixir of Shadow Power", 10000, "inv_scroll_06", "1313,4610", 0],
+  [16324, "Grimoire of Blood Pact (Rank 4)", 10000, "inv_misc_book_06", "5520,5749,5750,5753,5815,6027,6328,6373,6374,6376,6382,12776,12807", 0],
+  [20090, "Highlander's Chain Girdle", 9373, "inv_belt_20", "15127", 0],
+  [4837, "Strength of Will", 8002, "inv_jewelry_talisman_05", "3134,3537,4086", 0],
+  [2419, "Augmented Chain Belt", 7894, "inv_belt_03", "1322,1323,1349,1381,2845,3095,4177,5125,5812,5819,6028,8129", 0],
+  [4777, "Ironwood Maul", 7040, "inv_hammer_16", "222,844,2840,3534,3658,3682", 0],
+  [18440, "Sergeant's Cape", 6443, "inv_misc_cape_21", "12805", 0],
+  [22307, "Pattern: Enchanted Mageweave Pouch", 6000, "inv_scroll_03", "1318,3012,3346,4228,4617,5158,5757,5758", 0],
+  [5211, "Dusk Wand", 5830, "inv_wand_07", "1312,5133,5754,5816", 0],
+  [2434, "Russet Gloves", 5165, "inv_gauntlets_18", "1147,1314,1407,2849,3092,3315,3316,4175,5155,5821,8159,10293", 0],
+  [16113, "Manual: Mageweave Bandage", 5000, "inv_misc_book_03", "2805,13476", 0],
+  [10392, "Crimson Snake", 5000, "spell_nature_guardianward", "8404", 0],
+  [11291, "Star Wood", 4500, "inv_tradeskillitem_03", "1318,3012,3346,4228,4617,5158,5757,5758", 1],
+  [10323, "Pattern: Tuxedo Pants", 4500, "inv_scroll_03", "4577,8681", 0],
+  [4829, "Dreamer's Belt", 4153, "inv_belt_04", "1307,1454,2679,3134,3537,4085", 0],
+  [8766, "Morning Glory Dew", 4000, "inv_potion_01", "258,274,295,465,734,955,982,1237,1247,1328,1464,1697,2303,2352,2364,2366,2388,2832,3086,3298,3411,3546,3577,3621,3689,3708,3881,3882,3883,3884,3934,3937,3959,3961,4167,4169,4181,4190,4191,4192,4195,4266,4554,4555,4571,4782,4875,4879,4893,4981,5111,5112,5140,5611,5620,5688,5814,5871,6091,6272,6495,6727,6734,6735,6736,6739,6740,6746,6747,6790,6791,6807,6928,7485,7714,7731,7737,7744,7941,7943,8125,8137,8143,8150,8152,8931,9356,9501,11038,11103,11106,11116,11118,11187,11287,12019,12026,12959,14624,14731,14961,14962,14963,14964,15124,15125,15174,16458", 1],
+  [8957, "Spinefin Halibut", 4000, "inv_misc_fish_22", "1678,1684,2842,3086,3178,3497,3540,4200,4221,4305,4307,5814,6727,6791,6807,7943,8137,8931,11187,12962,14731", 1],
+  [21031, "Cabbage Kimchi", 4000, "inv_misc_food_63", "2303,3961,4167,4181,4191,4195,4266,6091,7941,12019,12026", 0],
+  [8485, "Cat Carrier (Bombay)", 4000, "inv_box_petcarrier_01", "6367", 0],
+  [3026, "Reinforced Bow", 3812, "inv_weapon_bow_02", "228,1297,1298,1459,1668,1687,2839,3015,3409,3410,3488,3951,4173,4203,4604,4892,5122,9548,9549,9551,9552,9553,9555,12029,14301", 0],
+  [4794, "Wolf Bracers", 3515, "inv_bracer_04", "844,3097,3492,3536", 0],
+  [2156, "Padded Boots", 3077, "inv_boots_09", "1314,2849,3092,3315,3316,3952,4175,4188,5821", 0],
+  [12162, "Plans: Hardened Iron Shortsword", 3000, "inv_scroll_03", "2843,3356,5512", 0],
+  [2150, "Polished Scale Bracers", 2930, "inv_bracer_03", "226,1323,1341,1349,1450,3095,4085,4177,4883,4886,5125,5812,5819,6028", 0],
+  [1198, "Claymore", 2676, "inv_sword_40", "1287,1289,2997,3021,3314,3331,3361,3479,3534,3658,4171,4183,4203,4231,4557,4569,5103,5120", 0],
+  [8925, "Crystal Vial", 2500, "inv_drink_06", "844,958,983,989,1148,1257,1286,1313,1325,1326,1453,1457,2380,2480,2481,2622,2810,2812,2821,2848,3010,3014,3090,3135,3334,3348,3367,3405,3490,3542,3548,3551,3561,3779,3954,3955,3956,3969,4216,4226,4229,4561,4585,4610,4615,4897,4899,5138,5169,5178,5503,5594,5817,6301,6779,7947,8145,8157,8158,8177,8178,8305,8363,8934,9636,11188,11189,12022,12028,12245,12941,12957,12958,15175", 1],
+  [4342, "Purple Dye", 2500, "inv_potion_02", "989,1148,1286,1347,1454,1474,1672,2394,2668,2669,2670,2672,2697,2698,2699,2810,2816,2819,2821,2846,3005,3091,3096,3364,3366,3367,3485,3779,3954,3955,3958,4168,4189,4225,4229,4561,4577,4589,4897,5128,5154,5565,5817,5944,6301,6567,6568,6574,6576,6731,7852,7854,7940,7947,8145,8160,8363,8681,8934,9636,11189,11874,12022,12028,12245,12941,12942,12943,12956,12957,12958", 1],
+  [10290, "Pink Dye", 2500, "inv_potion_09", "1347,1454,1474,1672,2394,2668,2669,2670,2672,2697,2698,2699,2816,2819,2846,3005,3091,3096,3364,3366,3485,3958,4168,4189,4225,4577,4589,5128,5154,5565,5944,6567,6568,6574,6576,6731,7852,7854,7940,8160,8681,11874,12942,12943,12956", 0],
+  [7742, "Schematic: Gnomish Cloaking Device", 2400, "inv_scroll_03", "6777", 0],
+  [15905, "Right-Handed Brass Knuckles", 2130, "inv_gauntlets_04", "3361,4203,7976", 0],
+  [1645, "Moonberry Juice", 2000, "inv_drink_02", "258,274,295,465,734,955,982,1149,1237,1247,1285,1328,1464,1697,2084,2303,2352,2364,2366,2388,2401,2803,2806,2808,2820,2832,2908,3086,3298,3313,3350,3411,3541,3546,3577,3621,3689,3708,3881,3882,3883,3884,3934,3937,3959,3961,4167,4169,4181,4190,4191,4192,4195,4266,4554,4555,4571,4782,4875,4879,4893,4896,4981,5101,5111,5112,5140,5611,5620,5688,5814,5871,6091,6272,6495,6727,6734,6735,6736,6739,6740,6746,6747,6790,6791,6807,6928,7485,7714,7731,7737,7744,7941,7942,7943,8125,8137,8139,8143,8150,8152,8362,8931,9356,9501,11038,11103,11106,11116,11118,11187,11287,11555,12019,12021,12026,12027,12246,12959,12960,14624,14731,14963,14964,15124,15125,15174,16458", 1],
+  [8343, "Heavy Silken Thread", 2000, "inv_fabric_silk_02", "989,1148,1286,1347,1454,1474,1672,2394,2668,2669,2670,2672,2697,2698,2699,2810,2816,2819,2821,2846,3005,3091,3096,3364,3366,3367,3485,3779,3954,3955,3958,4168,4189,4225,4229,4561,4577,4589,4897,5128,5154,5565,5817,5944,6301,6567,6568,6574,6576,6731,7852,7854,7940,7947,8145,8160,8363,8681,8934,9636,11189,11874,12022,12028,12245,12941,12942,12943,12956,12957,12958", 1],
+  [3466, "Strong Flux", 2000, "inv_misc_ammo_gunpowder_01", "372,790,960,989,1148,1286,1448,1456,1690,1694,2381,2393,2682,2684,2685,2687,2688,2810,2821,2844,2847,2999,3002,3133,3167,3356,3358,3367,3413,3477,3495,3578,3779,3954,3955,4229,4256,4259,4561,4587,4597,4599,4775,4877,4897,5100,5163,5175,5411,5512,5514,5519,5817,6298,6300,6301,6730,6777,7947,8145,8161,8176,8363,8678,8679,8934,9179,9544,9636,11185,11186,11189,12022,12028,12245,12941,12957,12958,14337,14624,14637,14737", 0],
+  [2595, "Jug of Badlands Bourbon", 2000, "inv_cask_02", "258,277,465,955,1301,1305,1311,1328,1697,2832,5111,5112,5140,5570,5611", 0],
+  [6056, "Recipe: Frost Protection Potion", 2000, "inv_scroll_03", "2812,2848", 0],
+  [16346, "Grimoire of Torment (Rank 2)", 2000, "inv_misc_book_06", "5520,5750,5753,5815,6027,6328,6374,6382,12807", 0],
+  [18649, "Schematic: Blue Firework", 1800, "inv_scroll_03", "1304,5175", 0],
+  [847, "Chainmail Armor", 1749, "inv_chest_chain", "167,1294,1362,3319,3483,3528,3529,3553,4164,4177,4187,4560,5107,5812,5819,8360,11703", 0],
+  [3683, "Recipe: Gooey Spider Cake", 1600, "inv_scroll_03", "340", 0],
+  [2594, "Flagon of Dwarven Honeymead", 1500, "inv_drink_05", "258,277,465,955,1301,1305,1311,1328,1464,1697,2832,5111,5112,5140,5570,5611", 1],
+  [10728, "Pattern: Black Swashbuckler's Shirt", 1500, "inv_scroll_03", "2663", 0],
+  [845, "Tanned Leather Pants", 1447, "inv_pants_wolf", "896,954,1295,1669,3093,3321,3483,3552,3684,3953,4164,4186,4236,4558,5108,5820,8359,10380", 0],
+  [2511, "Hunter's Boomstick", 1324, "inv_weapon_rifle_04", "1297,1469,1686,2997,3018,3088,3322,3488,7976,9551", 0],
+  [838, "Heavy Weave Pants", 1128, "inv_pants_14", "1214,1291,3092,3317,3486,3554,3683,3952,4164,4175,4185,4558,5108,5821,8358", 0],
+  [1708, "Sweet Nectar", 1000, "inv_drink_12", "258,274,295,465,734,955,982,1149,1237,1247,1285,1328,1464,1697,2084,2303,2352,2364,2366,2388,2401,2803,2806,2808,2820,2832,2908,3086,3298,3313,3350,3411,3541,3546,3577,3621,3689,3708,3881,3882,3883,3884,3934,3937,3959,3961,4167,4169,4181,4190,4191,4192,4195,4266,4554,4555,4571,4782,4875,4879,4893,4896,4981,5101,5111,5112,5140,5611,5620,5688,5814,5871,6091,6272,6495,6727,6734,6735,6736,6739,6740,6746,6747,6790,6791,6807,6928,7485,7714,7731,7737,7744,7941,7942,7943,8125,8137,8139,8143,8150,8152,8362,8931,9356,9501,11038,11103,11106,11116,11118,11187,11287,11555,12019,12021,12026,12027,12246,12959,12960,14624,14731,14963,14964,15124,15125,15174,16458", 1],
+  [3928, "Superior Healing Potion", 1000, "inv_potion_53", "983,8157,8158,8177,8178,11188", 1],
+  [4594, "Rockscale Cod", 1000, "inv_misc_fish_04", "1678,1684,2842,3086,3178,3497,3540,4200,4221,4305,4307,5814,6727,6791,6807,7943,8137,8931,11187,12962,14731", 1],
+  [2325, "Black Dye", 1000, "inv_potion_63", "989,1148,1286,1347,1454,1474,1672,2394,2668,2669,2670,2672,2697,2698,2699,2810,2816,2819,2821,2846,3005,3091,3096,3364,3366,3367,3485,3779,3954,3955,3958,4168,4189,4225,4229,4561,4577,4589,4897,5128,5154,5565,5817,5944,6301,6567,6568,6574,6576,6731,7852,7854,7940,7947,8145,8160,8363,8681,8934,9636,11189,11874,12022,12028,12245,12941,12942,12943,12956,12957,12958", 0],
+  [6377, "Formula: Enchant Boots - Minor Agility", 1000, "inv_misc_note_01", "3012,3537", 0],
+  [20226, "Highlander's Field Ration", 1000, "inv_misc_food_09", "15127", 0],
+  [840, "Heavy Weave Shoes", 853, "inv_boots_05", "1214,1291,3092,3317,3486,3554,3683,3952,4164,4175,4185,4558,5108,5821,8358", 0],
+  [6275, "Pattern: Greater Adept's Robe", 800, "inv_scroll_03", "1454,1474,2669,3499,4168,4577", 0],
+  [17028, "Holy Candle", 700, "inv_misc_candle_03", "958,983,1257,1275,1307,1308,1351,1463,1673,2805,3323,3335,3351,3490,3500,3542,3562,3700,3970,4083,4220,4562,4575,4878,5110,5151,8361,13476,14739,15175", 0],
+  [839, "Heavy Weave Gloves", 566, "inv_gauntlets_18", "1214,1291,3092,3317,3486,3554,3683,3952,4164,4175,4185,4558,5108,5821,8358", 0],
+  [1205, "Melon Juice", 500, "inv_drink_09", "227,258,274,295,465,734,791,955,982,1149,1237,1247,1285,1328,1448,1452,1464,1697,2084,2303,2352,2364,2366,2388,2401,2803,2806,2808,2820,2832,2908,3086,3298,3313,3350,3411,3498,3541,3546,3577,3621,3689,3708,3881,3882,3883,3884,3934,3937,3959,3961,3962,4082,4084,4167,4169,4170,4181,4190,4191,4192,4195,4266,4554,4555,4571,4782,4875,4876,4879,4893,4896,4981,5101,5111,5112,5140,5611,5620,5688,5814,5871,6091,6272,6495,6727,6734,6735,6736,6739,6740,6746,6747,6790,6791,6807,6928,7485,7714,7731,7737,7744,7941,7942,7943,8125,8137,8139,8143,8150,8152,8362,8931,9356,9501,11038,11103,11106,11116,11118,11187,11287,11555,12019,12021,12026,12027,12246,12959,12960,14624,14731,14963,14964,15124,15125,15174,16458", 1],
+  [4291, "Silken Thread", 500, "inv_fabric_silk_02", "960,989,1148,1286,1347,1454,1456,1474,1672,2381,2393,2394,2668,2669,2670,2672,2697,2698,2699,2810,2816,2819,2821,2846,3005,3091,3096,3364,3366,3367,3485,3779,3954,3955,3958,4168,4189,4225,4229,4561,4577,4589,4775,4877,4897,5100,5128,5154,5163,5565,5817,5944,6301,6567,6568,6574,6576,6731,7852,7854,7940,7947,8145,8160,8363,8681,8934,9636,11189,11874,12022,12028,12245,12941,12942,12943,12956,12957,12958", 1],
+  [4593, "Bristle Whisker Catfish", 500, "inv_misc_fish_30", "1678,1684,2842,3086,3178,3497,3540,4200,4221,4305,4307,5814,6727,6791,6807,7943,8137,8931,11187,12962,14731", 1],
+  [1710, "Greater Healing Potion", 500, "inv_potion_52", "2380,2480,2812,2848,4899,12245", 1],
+  [4341, "Yellow Dye", 500, "inv_potion_12", "989,1148,1286,1347,1454,1474,1672,2394,2668,2669,2670,2672,2697,2698,2699,2810,2816,2819,2821,2846,3005,3091,3096,3364,3366,3367,3485,3779,3954,3955,3958,4168,4189,4225,4229,4561,4577,4589,4897,5128,5154,5565,5817,5944,6301,6567,6568,6574,6576,6731,7852,7854,7940,7947,8145,8160,8363,8681,8934,9636,11189,11874,12022,12028,12245,12941,12942,12943,12956,12957,12958", 0],
+  [3857, "Coal", 500, "inv_ore_tin_01", "372,790,960,989,1148,1286,1456,1690,2381,2393,2810,2821,2844,2847,2999,3002,3133,3167,3356,3358,3367,3477,3578,3779,3954,3955,4229,4256,4259,4561,4597,4599,4775,4877,4897,5100,5163,5411,5512,5514,5817,6298,6300,6301,7947,8145,8161,8176,8363,8934,9179,9636,11186,11189,12022,12028,12245,12941,12957,12958,14624,14737", 0],
+  [6149, "Greater Mana Potion", 480, "inv_potion_73", "983,8157,8158,8177,8178,11188", 1],
+  [3827, "Mana Potion", 480, "inv_potion_72", "2380,2480,2812,2848,4899,12245", 1],
+  [4361, "Copper Tube", 480, "inv_gizmo_pipe_02", "1448,1694,2682,2684,2685,3133,3413,3495,4587,5175,5519,6730,6777,9544,11185,14637", 0],
+  [2494, "Stiletto", 401, "inv_weapon_shortblade_05", "54,1273,1698,2136,2265,2997,3077,3163,3314,3609,4231,4556,5102,10369", 0],
+  [3428, "Common Gray Shirt", 400, "inv_shirt_grey_01", "1214,1291,1299,3317,3486,3554,3683,4185,4558,5108,8358", 0],
+  [2370, "Battered Leather Harness", 377, "inv_chest_leather_04", "2137,3079,3093,3166,3321,4558", 0],
+  [4340, "Gray Dye", 350, "inv_drink_10", "989,1148,1286,1347,1454,1474,1672,2394,2668,2669,2670,2672,2697,2698,2699,2810,2816,2819,2821,2846,3005,3091,3096,3364,3366,3367,3485,3779,3954,3955,3958,4168,4189,4225,4229,4561,4577,4589,4897,5128,5154,5565,5817,5944,6301,6567,6568,6574,6576,6731,7852,7854,7940,7947,8145,8160,8363,8681,8934,9636,11189,11874,12022,12028,12245,12941,12942,12943,12956,12957,12958", 0],
+  [2395, "Light Mail Boots", 322, "inv_boots_01", "1240,1249,1294,2046,3613,4164,4177,5106,5812,5819", 0],
+  [3357, "Liferoot", 300, "inv_misc_root_02", "844,1302,1313,4083,4878,8305", 1],
+  [929, "Healing Potion", 300, "inv_potion_51", "1307,1453,1457,2481,2805,3134,3534,3956,4083,4878,8305,13476", 1],
+  [4595, "Junglevine Wine", 300, "inv_drink_09", "2832", 0],
+  [6532, "Bright Baubles", 250, "inv_misc_gem_variety_02", "960,989,1148,1286,1456,1678,1684,2381,2383,2393,2626,2810,2821,3029,3178,3333,3367,3497,3550,3572,3779,3954,3955,4222,4229,4561,4574,4775,4877,4897,5100,5162,5163,5494,5817,5940,5942,6301,7945,7947,8145,8363,8508,8934,9636,10118,11189,12022,12028,12031,12245,12941,12957,12958,12962,14740", 0],
+  [2367, "Woven Boots", 223, "inv_boots_09", "3166,3317,3522,4558", 0],
+  [3372, "Leaded Vial", 200, "inv_drink_06", "777,844,958,960,983,989,1148,1257,1286,1313,1325,1326,1453,1456,1457,2380,2381,2393,2480,2481,2622,2810,2812,2821,2848,3010,3014,3090,3135,3334,3348,3367,3405,3490,3499,3542,3548,3551,3556,3561,3779,3954,3955,3956,3969,4216,4226,4229,4561,4585,4610,4615,4775,4877,4897,4899,5100,5138,5163,5169,5178,5503,5594,5817,6301,6779,7947,8145,8157,8158,8177,8178,8305,8363,8934,9636,11188,11189,12022,12028,12043,12245,12941,12957,12958,15175", 1],
+  [3355, "Wild Steelbloom", 200, "inv_misc_flower_01", "844,1302,1313,4083,4878,8305", 1],
+  [3137, "Deadly Throwing Axe", 200, "inv_throwingaxe_05", "227,734,1149,1285,1448,1452,2084,2401,2803,2806,2808,2820,2908,3313,3350,3409,3541,3962,4170,4203,4235,4555,4592,4876,4896,5101,5120,7942,8139,8362,11038,11555,12021,12027,12246,12959,12960,14624,15174", 0],
+  [3421, "Simple Wildflowers", 200, "inv_misc_flower_02", "1302,1303,3014", 0],
+  [2612, "Plain Robe", 163, "inv_chest_cloth_33", "1309,1350,3092,3315,4172,4580,5156", 0],
+  [3713, "Soothing Spices", 160, "inv_misc_food_wheat_02", "960,989,1148,1286,1456,2381,2393,2397,2664,2810,2821,3027,3085,3367,3400,3779,3954,3955,4223,4229,4265,4553,4561,4775,4877,4897,5100,5160,5163,5483,5817,6301,7947,8145,8307,8363,8934,9636,11189,12022,12028,12033,12245,12941,12957,12958,14738", 1],
+  [3603, "Knitted Bracers", 145, "inv_bracer_03", "74,959,1238,1291,3092,3530,3611,3952,4164,4175,5821", 0],
+  [1179, "Ice Cold Milk", 125, "inv_drink_milk_01", "227,258,274,295,465,491,734,791,955,982,1237,1247,1285,1328,1448,1452,1464,1682,1685,1697,2140,2303,2352,2364,2366,2388,2401,2803,2806,2832,3086,3298,3313,3411,3481,3498,3541,3546,3577,3621,3689,3708,3881,3882,3883,3884,3934,3937,3959,3961,3962,4082,4084,4167,4169,4170,4181,4182,4190,4191,4192,4195,4241,4266,4554,4555,4571,4782,4875,4876,4879,4893,4981,5111,5112,5140,5611,5620,5688,5814,5871,6091,6272,6495,6727,6734,6735,6736,6739,6740,6746,6747,6790,6791,6807,6928,7485,7714,7731,7737,7744,7941,7942,7943,8125,8137,8139,8143,8150,8152,8362,8931,9356,9501,11038,11103,11106,11116,11118,11187,11287,12019,12021,12026,12027,12959,12960,14624,14731,15174,16458", 1],
+  [16167, "Versicolor Treat", 125, "inv_misc_food_28", "2303,3961,4167,4181,4191,4195,4266,6091,7941,12019,12026", 0],
+  [2596, "Skin of Dwarven Stout", 120, "inv_drink_milk_02", "258,277,465,955,1301,1305,1311,1328,1697,2832,5111,5112,5140,5570,5611", 1],
+  [3356, "Kingsblood", 120, "inv_misc_herb_03", "844,1302,1313,4083,4878,8305", 1],
+  [3385, "Lesser Mana Potion", 120, "inv_potion_71", "1307,2481,2805,3134,3956,4083,13476", 1],
+  [2321, "Fine Thread", 100, "inv_fabric_wool_02", "777,843,960,989,1148,1286,1347,1454,1456,1465,1474,1672,2381,2393,2394,2668,2669,2670,2672,2697,2698,2699,2810,2816,2819,2821,2846,3005,3091,3096,3364,3366,3367,3482,3485,3499,3556,3779,3954,3955,3958,4168,4189,4194,4225,4229,4561,4577,4589,4775,4877,4897,5100,5128,5154,5163,5565,5817,5944,6301,6567,6568,6574,6576,6731,7852,7854,7940,7947,8145,8160,8363,8681,8934,9636,11189,11874,12022,12028,12043,12245,12941,12942,12943,12956,12957,12958", 1],
+  [858, "Lesser Healing Potion", 100, "inv_potion_50", "844,958,1257,2140,3548,3658", 1],
+  [2453, "Bruiseweed", 100, "inv_misc_herb_01", "844,1302,1313,3490,3548,4083,4878,8305", 1],
+  [2880, "Weak Flux", 100, "inv_misc_ammo_gunpowder_02", "66,372,777,790,843,960,989,1148,1250,1286,1448,1456,1465,1690,1692,1694,2118,2381,2393,2682,2684,2685,2687,2688,2810,2821,2844,2847,2999,3002,3081,3133,3167,3168,3187,3356,3358,3367,3413,3477,3482,3495,3499,3556,3578,3614,3779,3954,3955,4194,4229,4256,4259,4561,4587,4597,4599,4775,4877,4897,5100,5163,5175,5411,5512,5514,5519,5817,6298,6300,6301,6730,6777,7947,8145,8161,8176,8363,8678,8679,8934,9179,9544,9636,11185,11186,11189,12022,12028,12043,12245,12941,12957,12958,14337,14624,14637,14737", 0],
+  [5740, "Red Fireworks Rocket", 100, "spell_fire_fireball02", "1304,2838,3180,5569,8116,8117,8118,8121,8122", 0],
+  [7005, "Skinning Knife", 82, "inv_weapon_shortblade_01", "66,777,843,989,1148,1250,1286,1465,1692,2118,2697,2698,2699,2810,2816,2819,2821,2846,3005,3081,3168,3187,3366,3367,3482,3499,3556,3614,3779,3954,3955,3958,4194,4225,4229,4561,4589,4775,4897,5128,5565,5817,5944,6301,6731,7852,7854,7947,8145,8160,8363,8934,9636,11189,11874,12022,12028,12043,12245,12941,12942,12943,12956,12957,12958", 0],
+  [2901, "Mining Pick", 81, "inv_pick_02", "66,372,777,790,843,960,989,1148,1250,1286,1448,1456,1465,1690,1692,1694,2118,2381,2393,2682,2684,2685,2687,2688,2810,2821,2844,2847,2999,3002,3081,3133,3167,3168,3187,3356,3358,3367,3413,3477,3482,3495,3499,3556,3578,3614,3779,3954,3955,4194,4229,4256,4259,4561,4587,4597,4599,4775,4877,4897,5100,5163,5175,5411,5512,5514,5519,5817,6298,6300,6301,6730,6777,7947,8145,8161,8176,8363,8678,8679,8934,9179,9544,9636,11185,11186,11189,12022,12028,12043,12245,12941,12957,12958,14337,14624,14637,14737", 0],
+  [785, "Mageroyal", 80, "inv_jewelry_talisman_03", "844,1302,1313,3490,3548,4083,4878,8305", 1],
+  [2449, "Earthroot", 80, "inv_misc_herb_07", "844,1302,1313,3490,3548,4083,4878,8305", 1],
+  [3107, "Keen Throwing Knife", 75, "inv_throwingknife_01", "227,734,791,1149,1285,1448,1452,2084,2401,2803,2806,2808,2820,2908,3313,3350,3409,3498,3541,3962,4082,4084,4170,4203,4235,4555,4592,4876,4896,5101,5120,7942,8139,8362,11038,11555,12021,12027,12246,12959,12960,14624,15174", 0],
+  [2389, "Rusted Chain Boots", 59, "inv_boots_01", "2116,3075,3161,4559", 0],
+  [2723, "Bottle of Dalaran Noir", 50, "inv_drink_10", "258,277,465,955,1301,1305,1311,1328,1697,2832,5111,5112,5140,5570,5611", 1],
+  [2686, "Thunder Ale", 50, "inv_drink_13", "1247,1682,7744", 1],
+  [2894, "Rhapsody Malt", 50, "inv_drink_13", "1247,1682,7744", 1],
+  [2604, "Red Dye", 50, "inv_potion_11", "66,843,989,1148,1250,1286,1347,1454,1465,1474,1672,1692,2118,2394,2668,2669,2670,2672,2697,2698,2699,2810,2816,2819,2821,2846,3005,3081,3091,3096,3168,3187,3364,3366,3367,3482,3485,3614,3779,3954,3955,3958,4168,4189,4194,4225,4229,4561,4577,4589,4775,4897,5128,5154,5565,5817,5944,6301,6567,6568,6574,6576,6731,7852,7854,7940,7947,8145,8160,8363,8681,8934,9636,11189,11874,12022,12028,12245,12941,12942,12943,12956,12957,12958", 0],
+  [2515, "Sharp Arrow", 50, "inv_ammo_arrow_02", "227,228,491,734,789,791,1149,1198,1285,1287,1297,1298,1448,1452,1459,1462,1668,1682,1685,1687,2084,2140,2401,2803,2806,2808,2820,2839,2908,3015,3165,3313,3350,3409,3410,3481,3488,3498,3541,3589,3610,3951,3962,4082,4084,4170,4173,4182,4203,4241,4555,4602,4604,4876,4892,4896,5101,5122,7942,7976,8139,8362,9548,9549,9551,9552,9553,9555,10369,11038,11555,12021,12027,12029,12246,12959,12960,14301,14624,15174,17598", 0],
+  [4289, "Salt", 50, "inv_misc_dust_02", "66,777,843,960,989,1148,1250,1286,1456,1465,1692,2118,2381,2393,2697,2698,2699,2810,2816,2819,2821,2846,3005,3081,3168,3187,3366,3367,3482,3499,3556,3614,3779,3954,3955,3958,4194,4225,4229,4561,4589,4775,4877,4897,5100,5128,5163,5565,5817,5944,6301,6731,7852,7854,7947,8145,8160,8363,8934,9636,11189,11874,12022,12028,12043,12245,12941,12942,12943,12956,12957,12958", 0],
+  [5042, "Red Ribboned Wrapping Paper", 50, "inv_misc_giftwrap_02", "151,491,1250,1285,1682,1685,1691,2134,2140,3076,3164,3186,3313,3481,3608,4170,4182,4241,8362", 0],
+  [9314, "Red Streaks Firework", 50, "spell_fire_flare", "8116,8117,8118,8121,8122,15011,15012", 0],
+  [2692, "Hot Spices", 40, "inv_misc_food_wheat_02", "777,843,960,989,1148,1286,1456,1465,2381,2393,2397,2664,2810,2821,3027,3085,3367,3400,3482,3499,3556,3779,3954,3955,4194,4223,4229,4265,4553,4561,4775,4877,4897,5100,5160,5163,5483,5817,6301,7947,8145,8307,8363,8934,9636,11189,12022,12028,12033,12043,12245,12941,12957,12958,14738", 1],
+  [2455, "Minor Mana Potion", 40, "inv_potion_70", "958,3658", 1],
+  [765, "Silverleaf", 40, "inv_misc_herb_10", "1313,3490,3548", 1],
+  [2447, "Peacebloom", 40, "inv_misc_flower_02", "1313,3490,3548", 1],
+  [4470, "Simple Wood", 38, "inv_tradeskillitem_01", "151,227,491,734,791,1149,1250,1285,1318,1448,1452,1650,1682,1685,1691,2084,2134,2140,2401,2803,2806,2808,2820,2908,3012,3076,3164,3186,3313,3346,3350,3481,3498,3541,3608,3962,4082,4084,4170,4182,4228,4241,4555,4617,4876,4896,5101,5158,5757,5758,7942,8139,8362,11038,11555,12021,12027,12246,12959,12960,14624,15174", 1],
+  [2384, "Tarnished Chain Bracers", 37, "inv_bracer_03", "1104,1213,3592,4177", 0],
+  [1835, "Dirty Leather Belt", 31, "inv_belt_04", "2113,3074,3160,4558", 0],
+  [159, "Refreshing Spring Water", 25, "inv_drink_07", "151,152,227,258,274,295,465,491,734,791,829,955,982,1149,1237,1247,1250,1285,1328,1448,1452,1464,1682,1685,1691,1697,2084,2115,2134,2140,2303,2352,2364,2366,2381,2388,2397,2401,2664,2803,2806,2808,2820,2832,2908,3027,3072,3076,3085,3086,3158,3164,3186,3298,3313,3350,3400,3411,3481,3498,3541,3546,3577,3587,3608,3621,3689,3708,3881,3882,3883,3884,3934,3937,3959,3961,3962,4082,4084,4167,4169,4170,4181,4182,4190,4191,4192,4195,4223,4241,4265,4266,4553,4554,4555,4571,4782,4875,4876,4879,4893,4896,4981,5101,5111,5112,5140,5160,5483,5611,5620,5688,5814,5871,6091,6272,6495,6727,6734,6735,6736,6739,6740,6746,6747,6790,6791,6807,6928,7485,7714,7731,7737,7744,7941,7942,7943,8125,8137,8139,8143,8150,8152,8307,8362,8931,9356,9501,11038,11103,11106,11116,11118,11187,11287,11555,12019,12021,12026,12027,12033,12246,12959,12960,14624,14731,14738,15174,16458", 1],
+  [4536, "Shiny Red Apple", 25, "inv_misc_food_19", "734,894,1671,3017,3342,3934,3961,4191,4891,5814,6735,7714,7978", 1],
+  [787, "Slitherskin Mackerel", 25, "inv_misc_fish_24", "1678,1684,2842,3086,3178,3497,3540,4200,4221,4305,4307,5814,6727,6791,6807,7943,8137,8931,11187,12962,14731", 1],
+  [11109, "Special Chicken Feed", 25, "inv_misc_food_wheat_01", "233", 0],
+  [2119, "Thin Cloth Gloves", 24, "inv_gauntlets_18", "190,836,1238,3590,4175", 0],
+  [3371, "Empty Vial", 20, "inv_drink_06", "66,777,843,844,958,960,983,989,1148,1250,1257,1286,1313,1325,1326,1453,1456,1457,1465,1692,2118,2380,2381,2393,2480,2481,2622,2810,2812,2821,2848,3010,3014,3081,3090,3135,3168,3187,3334,3348,3367,3405,3482,3490,3499,3542,3548,3551,3556,3561,3614,3779,3954,3955,3956,3969,4194,4216,4226,4229,4561,4585,4610,4615,4775,4877,4897,4899,5100,5138,5163,5169,5178,5503,5594,5817,6301,6779,7947,8145,8157,8158,8177,8178,8305,8363,8934,9636,11188,11189,12022,12028,12043,12245,12941,12957,12958,15175", 1],
+  [4592, "Longjaw Mud Snapper", 20, "inv_misc_fish_32", "1678,1684,2842,3086,3178,3497,3540,4200,4221,4305,4307,5814,6727,6791,6807,7943,8137,8931,11187,12962,14731", 1],
+  [5956, "Blacksmith Hammer", 18, "inv_hammer_20", "66,777,790,843,960,989,1250,1286,1448,1456,1465,1690,1692,1694,2118,2381,2393,2682,2684,2685,2687,2688,2844,2847,2999,3081,3133,3168,3187,3356,3367,3413,3477,3482,3495,3499,3556,3614,4194,4229,4259,4561,4587,4597,4775,4877,5100,5163,5175,5411,5512,5519,5817,6300,6301,6730,6777,7947,8145,8161,8176,8363,8678,8679,8934,9179,9544,9636,11185,12022,12028,12043,14337,14624,14637,14737", 0],
+  [2678, "Mild Spices", 10, "inv_misc_food_wheat_02", "66,777,843,960,989,1148,1250,1286,1456,1465,1692,2118,2381,2393,2397,2664,2810,2821,3027,3081,3085,3168,3187,3367,3400,3482,3499,3556,3614,3779,3954,3955,4194,4223,4229,4265,4553,4561,4775,4877,4897,5100,5160,5163,5483,5817,6301,7947,8145,8307,8363,8934,9636,11189,12022,12028,12033,12043,12245,12941,12957,12958,14738", 1],
+  [2320, "Coarse Thread", 10, "inv_fabric_linen_03", "66,777,843,960,989,1148,1250,1286,1347,1454,1456,1465,1474,1672,1692,2118,2381,2393,2394,2668,2669,2670,2672,2697,2698,2699,2810,2816,2819,2821,2846,3005,3081,3091,3096,3168,3187,3364,3366,3367,3482,3485,3499,3556,3614,3779,3954,3955,3958,4168,4189,4194,4225,4229,4561,4577,4589,4775,4877,4897,5100,5128,5154,5163,5565,5817,5944,6301,6567,6568,6574,6576,6731,7852,7854,7940,7947,8145,8160,8363,8681,8934,9636,11189,11557,11874,12022,12028,12043,12245,12941,12942,12943,12956,12957,12958", 0],
+  [2512, "Rough Arrow", 10, "inv_ammo_arrow_02", "151,152,228,491,789,791,829,1198,1250,1285,1287,1297,1298,1459,1462,1668,1682,1685,1687,1691,2115,2134,2140,2839,3015,3072,3076,3158,3164,3165,3186,3313,3409,3410,3481,3488,3498,3587,3589,3608,3610,3951,4082,4084,4170,4173,4182,4203,4241,4555,4602,4604,4892,5122,7942,7976,8362,9548,9549,9551,9552,9553,9555,10369,12027,12029,12960,14301,17598", 0],
+];
+/* SHOP_DATA_END */
+
+(function () {
+  const shopWin = document.getElementById("shopWin");
+  const shopContent = document.getElementById("shopContent");
+  const $list = document.getElementById("shopList");
+  const $count = document.getElementById("shopCount");
+  const $search = document.getElementById("shopSearch");
+  const $sort = document.getElementById("sortChip");
+  const $filter = document.getElementById("filterChip");
+  const $toast = document.getElementById("shopToast");
+  const $toastText = document.getElementById("shopToastText");
+
+  const BASE_W = 440, BASE_H = 500, PAD = 24, SCALE_MAX = 2.6;
+
+  /* 面板尺寸 / 缩放: 与 MerchantUI.lua 的 PanelSize + ComputeLayout 同一套算法 */
+  function layoutShop() {
+    if (!shopWin.clientWidth) return;          // 还没显示 (display:none) 时算不出尺寸
+    const pw = shopWin.clientWidth, ph = shopWin.clientHeight;
+    const innerW = pw - PAD * 2, innerH = ph - PAD * 2;
+    let k = Math.min(innerH / BASE_H, innerW / BASE_W);
+    if (!(k > 0)) k = 1;
+    k = Math.min(k, SCALE_MAX);
+    const cw = Math.max(BASE_W, innerW / k);
+    shopContent.style.width = cw + "px";
+    shopContent.style.height = BASE_H + "px";
+    shopContent.style.transform = "translate(-50%, -50%) scale(" + k + ")";
+  }
+
+  /* ---------- 数据 ---------- */
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+  function zoneName(id) {
+    const s = SHOP_ZONES[id];
+    if (!s) return null;
+    const [zh, en] = s.split("|");
+    return zh || en || null;
+  }
+  function npcInfo(id) {
+    const s = SHOP_NPCS[id];
+    if (!s) return { id, name: "#" + id, zone: 0, coord: "", fac: "N" };
+    const [name, zone, coord, fac] = s.split("|");
+    return { id, name: name || "#" + id, zone: +zone || 0, coord: coord || "", fac: fac || "N" };
+  }
+
+  const ALL = SHOP_GOODS.map((g) => ({
+    id: g[0], name: g[1], price: g[2], icon: g[3],
+    npcs: g[4] ? g[4].split(",").map(Number) : [],
+    mat: !!g[5],
+  }));
+
+  let sortMode = "price";
+  let onlyMats = false;
+  let query = "";
+  const expanded = new Set();
+  let view = [];
+
+  const SORTS = [["price", "买价 ↓"], ["name", "名字"], ["npcs", "商人 ↓"]];
+
+  function apply() {
+    const q = query.trim().toLowerCase();
+    let npcHit = null;
+    if (q) {
+      npcHit = new Set();
+      for (const id in SHOP_NPCS) {
+        if ((SHOP_NPCS[id].split("|")[0] || "").toLowerCase().includes(q)) npcHit.add(+id);
+      }
+    }
+
+    view = ALL.filter((g) => {
+      if (onlyMats && !g.mat) return false;
+      if (!q) return true;
+      if ((g.name || "").toLowerCase().includes(q)) return true;
+      if (npcHit) return g.npcs.some((id) => npcHit.has(id));
+      return false;
+    });
+
+    if (sortMode === "price") view.sort((a, b) => b.price - a.price || a.id - b.id);
+    else if (sortMode === "npcs") view.sort((a, b) => b.npcs.length - a.npcs.length || a.id - b.id);
+    else view.sort((a, b) => (a.name || "").toLowerCase().localeCompare((b.name || "").toLowerCase()));
+
+    paint();
+  }
+
+  /* 价格列只有 96px: 先试精确写法, 放不下退成短写 (对应 MerchantUI.lua 的 PriceText) */
+  function priceText(p) {
+    if (!(p > 0)) return "无价";
+    const exact = moneyEx(p);
+    return approxWidth(exact) <= 90 ? exact : money(p);
+  }
+
+  function iconStyle(id) {
+    const h = (id * 47) % 360;
+    return "background:linear-gradient(160deg,hsl(" + h + ",42%,34%),hsl(" + h + ",42%,18%))";
+  }
+
+  function paint() {
+    const html = [];
+    for (const it of view) {
+      const open = expanded.has(it.id);
+      html.push(
+        '<div class="srow' + (open ? " open" : "") + '" data-id="' + it.id + '">' +
+        '<span class="caret">' + (it.npcs.length ? (open ? "-" : "+") : "") + "</span>" +
+        '<span class="sicon" style="' + iconStyle(it.id) + '">' + esc((it.name || "?").slice(0, 1)) + "</span>" +
+        '<span class="sname">' + esc(it.name || "#" + it.id) + "</span>" +
+        '<span class="scnt">' + it.npcs.length + " 家</span>" +
+        '<span class="sprice">' + priceText(it.price) + "</span>" +
+        "</div>"
+      );
+      if (open) {
+        for (const npcID of it.npcs) {
+          const n = npcInfo(npcID);
+          const z = zoneName(n.zone);
+          html.push(
+            '<div class="subrow" data-npc="' + npcID + '">' +
+            '<span class="subname">' + esc(n.name) + "</span>" +
+            '<span class="subzone">' + (z ? esc(z) + " " + esc(n.coord) : "位置未知") + "</span>" +
+            '<span class="subfac fac-' + n.fac + '">' + (n.fac === "A" ? "联盟" : n.fac === "H" ? "部落" : "中立") + "</span>" +
+            "</div>"
+          );
+        }
+      }
+    }
+    $list.innerHTML = html.length ? html.join("") : '<div class="shop-empty">没有匹配的物品 —— 换个关键词试试</div>';
+    $count.textContent = view.length === ALL.length
+      ? "985 种货 · 829 位商人 · 10903 条货架"
+      : "筛出 " + view.length + " 种货 / 共 985";
+  }
+
+  let toastTimer = null;
+  function toast(msg, hold) {
+    $toastText.textContent = msg;
+    $toast.classList.add("on");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => $toast.classList.remove("on"), hold || 3200);
+  }
+
+  /* ---------- 交互 ---------- */
+  let downOnRow = null;
+  $list.addEventListener("mousedown", (e) => {
+    downOnRow = e.target.closest(".subrow") ? "npc" : (e.target.closest(".srow") ? "item" : null);
+  });
+  $list.addEventListener("contextmenu", (e) => {
+    const row = e.target.closest(".srow");
+    if (!row) return;
+    e.preventDefault();
+    const it = view.find((v) => v.id === +row.dataset.id);
+    if (it) toast("右键 = 在拍卖行搜索「" + (it.name || "#" + it.id) + "」");
+  });
+  $list.addEventListener("click", (e) => {
+    const sub = e.target.closest(".subrow");
+    if (sub) {
+      const n = npcInfo(+sub.dataset.npc);
+      const z = zoneName(n.zone);
+      toast("已标点: " + n.name + " · " + (z || "未知区域") + " " + n.coord);
+      return;
+    }
+    const row = e.target.closest(".srow");
+    if (!row) return;
+    const id = +row.dataset.id;
+    if (expanded.has(id)) expanded.delete(id); else expanded.add(id);
+    paint();
+  });
+
+  $search.addEventListener("input", () => { query = $search.value; apply(); });
+  $search.addEventListener("keydown", (e) => { if (e.key === "Escape") { $search.value = ""; query = ""; apply(); $search.blur(); } });
+
+  $sort.addEventListener("click", () => {
+    let i = SORTS.findIndex((s) => s[0] === sortMode);
+    i = (i + 1) % SORTS.length;
+    sortMode = SORTS[i][0];
+    $sort.textContent = SORTS[i][1];
+    apply();
+  });
+  $filter.addEventListener("click", () => {
+    onlyMats = !onlyMats;
+    $filter.textContent = onlyMats ? "材料" : "全部";
+    $filter.classList.toggle("on", onlyMats);
+    apply();
+  });
+
+  /* ---------- 视图切换 (主界面 / 商人货架) ---------- */
+  function setMode(mode) {
+    document.body.classList.toggle("shop-mode", mode === "shop");
+    for (const b of document.querySelectorAll("#modeBar button")) {
+      b.classList.toggle("on", b.dataset.mode === mode);
+    }
+    if (mode === "shop") {
+      layoutShop();
+      apply();
+    }
+  }
+  for (const b of document.querySelectorAll("#modeBar button")) {
+    b.addEventListener("click", () => setMode(b.dataset.mode));
+  }
+  window.addEventListener("resize", layoutShop);
+
+  document.getElementById("vendorBtn").addEventListener("click", () => setMode("shop"));
+  document.getElementById("settingsShop").addEventListener("click", () => setMode("shop"));
+
+  /* 截图/演示用: preview.html?view=shop 直接停在商人货架 */
+  const qs = new URLSearchParams(location.search);
+  apply();
+  if (qs.get("view") === "shop") setMode("shop");
+
+  /* 截图用: ?view=shop&open=1 展开前 3 件的商人名单 */
+  if (qs.get("view") === "shop" && qs.get("open") === "1") {
+    view.slice(0, 3).forEach((it) => expanded.add(it.id));
+    paint();
+  }
+  /* 截图用: ?view=shop&mats=1 打开「只看材料」 */
+  if (qs.get("view") === "shop" && qs.get("mats") === "1") {
+    $filter.click();
+  }
+  /* 截图用: ?view=shop&q=linen 预填搜索词 */
+  if (qs.get("view") === "shop" && qs.get("q")) {
+    $search.value = qs.get("q");
+    query = qs.get("q");
+    apply();
+  }
+})();
 </script>
 </body>
 </html>

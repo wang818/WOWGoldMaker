@@ -140,6 +140,8 @@ local function ScanVendor()
     local ok, n = pcall(ns.Vendor.Scan)
     if ok and type(n) == "number" and n > 0 then
         if ns.UI and ns.UI.RefreshNpcAll then ns.UI.RefreshNpcAll() end
+        -- 商人货架的价格口径也一样 (实测价优先于快照), 跟着重画
+        if ns.Merchant and ns.Merchant.Refresh then pcall(ns.Merchant.Refresh) end
     end
 end
 
@@ -293,23 +295,37 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
         end
     elseif msg == "ah clear" or msg == "查价 清空" then
         if ns.Auction then ns.Auction.Clear() end
-    elseif msg == "vendor" or msg == "商人" then
-        if ns.Vendor and ns.Vendor.Report then
-            ns.Vendor.Report()
+    elseif msg == "vendor" or msg == "商人" or msg == "货架" or msg == "商店" or msg == "stock" then
+        -- 商人货架 = 独立窗口, 浏览全部货物 + 反查谁卖
+        if ns.MerchantUI and ns.MerchantUI.Toggle then
+            ns.MerchantUI.Toggle()
         else
-            ns.Print("|cffff5555商人模块未加载|r (检查 Vendor.lua 是否在 .toc 里)")
+            ns.Print("|cffff5555商人货架未加载|r (检查 MerchantUI.lua 是否在 .toc 里)")
         end
-    elseif msg == "vendor scan" or msg == "商人 扫描" then
-        if ns.Vendor and ns.Vendor.Scan then
-            local n = ns.Vendor.Scan()
-            ns.Print(format("这次从商人货架上记下 %d 条价。", n))
-            if n > 0 and ns.UI and ns.UI.RefreshNpcAll then ns.UI.RefreshNpcAll() end
-        end
-    elseif msg == "vendor clear" or msg == "商人 清空" then
-        if ns.Vendor and ns.Vendor.ClearSeen then
-            local n = ns.Vendor.ClearSeen()
-            ns.Print(format("清掉 %d 条货架实测价, 退回离线价目表。", n))
-            if ns.UI and ns.UI.RefreshNpcAll then ns.UI.RefreshNpcAll() end
+    elseif msg:match("^货架 ") or msg:match("^商人 ") or msg:match("^vendor ") then
+        local kw = msg:match("^货架 (.+)$") or msg:match("^商人 (.+)$") or msg:match("^vendor (.+)$")
+        if kw == "scan" or kw == "扫描" then
+            if ns.Vendor and ns.Vendor.Scan then
+                local n = ns.Vendor.Scan()
+                ns.Print(format("这次从商人货架上记下 %d 条价。", n))
+                if n > 0 and ns.UI and ns.UI.RefreshNpcAll then ns.UI.RefreshNpcAll() end
+                if ns.Merchant and ns.Merchant.Refresh then pcall(ns.Merchant.Refresh) end
+            end
+        elseif kw == "clear" or kw == "清空" then
+            if ns.Vendor and ns.Vendor.ClearSeen then
+                local n = ns.Vendor.ClearSeen()
+                ns.Print(format("清掉 %d 条货架实测价, 退回离线价目表。", n))
+                if ns.UI and ns.UI.RefreshNpcAll then ns.UI.RefreshNpcAll() end
+                if ns.Merchant and ns.Merchant.Refresh then pcall(ns.Merchant.Refresh) end
+            end
+        elseif kw == "report" or kw == "报告" then
+            if ns.Vendor and ns.Vendor.Report then
+                ns.Vendor.Report()
+            else
+                ns.Print("|cffff5555商人模块未加载|r")
+            end
+        elseif ns.MerchantUI and ns.MerchantUI.Search then
+            ns.MerchantUI.Search(kw)
         end
     elseif msg:match("^search") or msg:match("^搜索") then
         -- 手动试一下「在拍卖行里搜索某件物品」, 不用去列表里点
@@ -387,6 +403,10 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
         print("  |cffe8c25a/wgm search <ID>|r 在拍卖行里搜索该物品 (同左键点列表里的物品)")
         print("  |cffe8c25a/wgm npc|r        已记录的 NPC 购买价条数")
         print("  |cffe8c25a/wgm npc clear|r  清空手动录入的 NPC 购买价")
+        print("  |cffe8c25a/wgm 商人|r       打开商人货架 (浏览所有商人的货, 反查谁卖)")
+        print("  |cffe8c25a/wgm 货架 <词>|r  打开商人货架并搜索 (物品名或商人名)")
+        print("  |cffe8c25a/wgm vendor report|r 商人价目表 / 当前货架报告")
+        print("  |cffe8c25a/wgm stock|r      商人货架 (同 /wgm 商人)")
         print("  |cffe8c25a/wgm tip <ID>|r   诊断物品提示 (为什么只有名字 / 没有描述)")
         print("  |cffe8c25a/wgm tip extra|r  悬停改成「物品介绍 + 配方/价格」, 再输一次关掉")
         print("  |cffe8c25a/wgm strata|r     显示/切换面板层级 (默认 DIALOG, 压在 EllesmereUI 上层)")
