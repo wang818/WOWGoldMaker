@@ -370,13 +370,24 @@
     line-height: 1.4; }
   .auto-pop .ap-hint.ap-sub { margin-top: 3px; }
   .auto-pop .ap-btns { display: flex; gap: 6px; margin-top: 11px; justify-content: flex-end; }
-  .auto-pop .ap-btns button {
+  /* 按钮样式提到通用层: 设置面板里也有按钮 (开启/立即扫一轮), 不在 .ap-btns 里 */
+  .auto-pop button {
     font-size: 9px; padding: 4px 10px; border-radius: 3px; cursor: pointer;
     background: rgba(255,255,255,.08); color: var(--muted);
     border: 1px solid rgba(255,255,255,.10); font-family: inherit;
   }
-  .auto-pop .ap-btns button:hover { background: rgba(255,255,255,.16); color: var(--text); }
-  .auto-pop .ap-btns button.primary { color: var(--gold); border-color: rgba(232,194,90,.35); }
+  .auto-pop button:hover { background: rgba(255,255,255,.16); color: var(--text); }
+  .auto-pop button.primary { color: var(--gold); border-color: rgba(232,194,90,.35); }
+
+  /* 自动购买「设置」窗 (对应 UI.lua 的 BuildAutoCfg):
+     比单价浮窗宽一点, 多一行「扫描间隔」和两行提示 */
+  .auto-pop .ap-card.acfg { width: 320px; }
+  .acfg .ap-lbl { flex: 0 0 64px; }
+  .acfg .ap-state {
+    font-size: 9px; color: var(--muted); margin-top: 5px;
+    white-space: nowrap; overflow: hidden;
+  }
+  .acfg .ap-btnrow { display: flex; gap: 6px; margin-top: 8px; }
 
   .blk .req {
     flex: 0 0 auto; text-align: right;
@@ -608,7 +619,7 @@
 </head>
 <body>
 
-<h1><b>WOWGOLDMAKER</b> · 单页预览 (v0.12.1)</h1>
+<h1><b>WOWGOLDMAKER</b> · 单页预览 (v0.12.2)</h1>
 
 <div class="window">
   <div class="shadow"></div>
@@ -663,6 +674,27 @@
         <button>取消</button><button>清除</button><button class="primary">保存</button>
       </div>
     </div>
+
+    <!-- 自动购买设置, 对应 ns.UI.AutoBuyConfig (UI.lua BuildAutoCfg) -->
+    <div class="auto-pop" id="acfgPop">
+      <div class="ap-card acfg">
+        <div class="ap-title">自动购买 · 设置</div>
+        <div class="ap-state" id="acState"></div>
+        <div class="ap-btnrow">
+          <button id="acToggle">开启</button>
+          <button id="acScan">立即扫一轮</button>
+        </div>
+        <div class="ap-row"><span class="ap-lbl">单轮最多花</span>
+          <span class="ap-cell"><input id="acCap" maxlength="8" inputmode="numeric"><i>金</i></span>
+        </div>
+        <div class="ap-row"><span class="ap-lbl">扫描间隔</span>
+          <span class="ap-cell"><input id="acGap" maxlength="5" inputmode="numeric"><i>秒</i></span>
+        </div>
+        <div class="ap-hint" id="acHint1"></div>
+        <div class="ap-hint ap-sub">最小 1 秒, 不设上限 · 填太小会一直查价 · 买多少看单轮上限</div>
+        <div class="ap-btns"><button id="acClose" class="primary">关闭窗口</button></div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -711,7 +743,7 @@
 </div>
 
 <div class="settings">
-  <h2><span>金币工坊</span> v0.12.1</h2>
+  <h2><span>金币工坊</span> v0.12.2</h2>
   <div class="sub">魔兽世界无限服 · 金币工具箱</div>
   <hr>
   <div class="row" id="row1"><div class="box"><span class="check">✓</span></div><span class="lbl">登录后自动呼出主界面</span></div>
@@ -971,6 +1003,72 @@
     toastTimer = setTimeout(() => $toast.classList.remove("on"), hold || 4500);
   }
   $toast.onclick = () => { clearTimeout(toastTimer); $toast.classList.remove("on"); };
+
+  /* ---------- 自动购买设置 (对应 UI.lua 的 BuildAutoCfg / ns.UI.AutoBuyConfig) ----------
+     开关 / 单轮花费上限 / 扫描间隔。真扫描在游戏里由 AutoBuy.lua 的计时器做,
+     预览只演示界面: 间隔的最小值归一化与「改完立刻生效」的提示。 */
+  (function initAutoCfg() {
+    const host = $list.closest(".content");
+    const pop = document.getElementById("acfgPop");
+    if (!host || !pop) return;
+
+    const state = document.getElementById("acState");
+    const toggle = document.getElementById("acToggle");
+    const capBox = document.getElementById("acCap");
+    const gapBox = document.getElementById("acGap");
+    const hint1 = document.getElementById("acHint1");
+
+    /* 演示用的存档值, 和 db.autoBuyOn / autoBuyCap / autoBuyGap 对应 */
+    const CFG = { on: false, cap: 2, gap: 60 };
+    const ITEMS = 2;
+
+    function paint() {
+      toggle.textContent = CFG.on ? "关闭" : "开启";
+      toggle.classList.toggle("primary", CFG.on);
+      state.textContent = (CFG.on ? "开着" : "关着") + " · " + ITEMS + " 件 · 单轮上限 "
+        + CFG.cap + "金 · 每 " + CFG.gap + " 秒";
+      capBox.value = CFG.cap;
+      gapBox.value = CFG.gap;
+      hint1.textContent =
+        "打开拍卖行后每 " + CFG.gap + " 秒扫一轮 · 有挂单且单价不高于设定值就买";
+    }
+
+    /* 和 AutoBuy.SetGap 一致的归一化: 清空回默认 60, 0/负数抬到 1, 上限不设 */
+    function normGap() {
+      const raw = gapBox.value.trim();
+      if (raw === "") return 60;
+      const n = Math.floor(Number(raw));
+      if (!isFinite(n) || n <= 0) return 1;
+      return Math.max(1, n);
+    }
+
+    toggle.onclick = () => { CFG.on = !CFG.on; paint(); };
+    gapBox.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      CFG.gap = normGap();
+      gapBox.value = CFG.gap;          // 归一化后回填, 填 0 也能看见实际是 1
+      paint();
+      showToast("扫描间隔改成 " + CFG.gap + " 秒");
+    });
+    capBox.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      CFG.cap = Math.max(0, Math.floor(Number(capBox.value) || 0));
+      paint();
+      showToast("单轮花费上限改成 " + CFG.cap + "金");
+    });
+    document.getElementById("acScan").onclick = () => showToast("演示: 游戏里会立刻扫一轮");
+    document.getElementById("acClose").onclick = () => pop.classList.remove("on");
+    pop.addEventListener("click", (e) => { if (e.target === pop) pop.classList.remove("on"); });
+
+    const openCfg = () => { paint(); pop.classList.add("on"); gapBox.focus(); };
+    const $setBtn = document.getElementById("setBtn");
+    if ($setBtn) $setBtn.onclick = openCfg;
+
+    /* 截图/演示钩子: preview.html?autocfg=1 */
+    if (new URLSearchParams(location.search).get("autocfg")) setTimeout(openCfg, 60);
+  })();
 
   function summarize(rows) {
     const agg = new Map();

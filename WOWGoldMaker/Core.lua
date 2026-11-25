@@ -43,10 +43,10 @@ local DEFAULTS = {
     tipExtra   = false,                                   -- 悬停是否附带配方/单价/盈亏 (默认只显示物品原来的介绍)
 
     -- 自动购买 (真花钱, 默认全关)
-    autoBuyOn  = false,                                   -- 总开关: 拍卖行开着时每分钟扫一轮
+    autoBuyOn  = false,                                   -- 总开关: 拍卖行开着时按间隔扫一轮
     autoBuy    = {},                                      -- itemID -> { p = 单价上限(铜) }
     autoBuyCap = 2 * 10000,                               -- 单轮总花费上限 (铜), 默认 2 金
-    autoBuyGap = 60,                                      -- 扫描间隔 (秒)
+    autoBuyGap = 60,                                      -- 扫描间隔 (秒), 最小 1, 上限不设
 }
 
 local db
@@ -359,7 +359,7 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
         elseif sub == "开" or sub == "on" then
             AB.SetEnabled(true)
             ns.Print("自动购买已开启 —— " .. AB.Summary())
-            ns.Print("|cff8a929e打开拍卖行才会开始扫, 每分钟一轮|r")
+            ns.Print(format("|cff8a929e打开拍卖行才会开始扫, 每 %d 秒一轮 (可调)|r", AB.Gap()))
         elseif sub == "关" or sub == "off" then
             AB.SetEnabled(false)
             ns.Print("自动购买已关闭")
@@ -395,8 +395,17 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
                 ns.Print(format("已加入自动购买: #%s ≤ %s 金%s",
                     id, g, AB.Enabled() and "" or " (总开关还关着)"))
             end
+        elseif sub:match("^间隔") or sub:match("^频率") or sub:match("^gap") then
+            -- 最小 1 秒, 上限不设: 填多少就多少, 只把 0 / 负数 / 非数字抬到 1 或退回默认
+            local n = tonumber(sub:match("(%d+)"))
+            if not n then
+                ns.Print(format("当前扫描间隔 %d 秒 · 用法: /wgm 自动 间隔 <秒>", AB.Gap()))
+            else
+                ns.Print(format("扫描间隔改成 %d 秒%s", AB.SetGap(n),
+                    AB.Enabled() and "" or " (总开关还关着)"))
+            end
         else
-            ns.Print("用法: /wgm 自动 [开|关|扫|列|清空|加 <ID> <金>]")
+            ns.Print("用法: /wgm 自动 [开|关|扫|列|清空|间隔 <秒>|加 <ID> <金>]")
         end
     elseif msg:match("^search") or msg:match("^搜索") then
         -- 手动试一下「在拍卖行里搜索某件物品」, 不用去列表里点
@@ -478,6 +487,8 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
         print("  |cffe8c25a/wgm 货架 <词>|r  打开商人货架并搜索 (物品名或商人名)")
         print("  |cffe8c25a/wgm 收藏|r       打开「我的收藏」(货架行首点 ★ 收进来)")
         print("  |cffe8c25a/wgm 收藏 <词>|r  在我的收藏里搜索")
+        print("  |cffe8c25a/wgm 自动|r       自动购买设置 (真花钱, 默认关)")
+        print("  |cffe8c25a/wgm 自动 间隔 <秒>|r 改扫描间隔 (最小 1 秒, 不设上限)")
         print("  |cffe8c25a/wgm vendor report|r 商人价目表 / 当前货架报告")
         print("  |cffe8c25a/wgm stock|r      商人货架 (同 /wgm 商人)")
         print("  |cffe8c25a/wgm tip <ID>|r   诊断物品提示 (为什么只有名字 / 没有描述)")

@@ -2958,14 +2958,15 @@ end
 
 --------------------------------------------------------------------------- 自动购买总开关
 
--- 开关 + 上限都在这里改, 避免玩家只能去改存档文件
+-- 开关 + 上限 + 间隔都在这里改, 避免玩家只能去改存档文件
 local autoCfg
 
 local function BuildAutoCfg()
     if autoCfg then return autoCfg end
     if not frame then return nil end
 
-    local f = T.Glass(frame, 300, 150, "panel")
+    -- 比上一版高: 多了一行「扫描间隔」, 提示也从一行变两行
+    local f = T.Glass(frame, 320, 196, "panel")
     f:SetFrameStrata(ns.DB().strata or "DIALOG")
     f:SetFrameLevel((frame:GetFrameLevel() or 200) + 20)
     f:SetClampedToScreen(true)
@@ -2981,7 +2982,7 @@ local function BuildAutoCfg()
 
     local state = T.Text(f, 9, C.muted)
     state:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -6)
-    state:SetWidth(272)
+    state:SetWidth(292)
     state:SetWordWrap(false)
 
     local toggle = MakeMiniButton(f, 76, 20, "开启")
@@ -3025,11 +3026,48 @@ local function BuildAutoCfg()
     capUnit:SetPoint("LEFT", capBox, "RIGHT", 4, 0)
     capUnit:SetText("金")
 
+    -- 扫描间隔: 以前写死 60 秒, 现在玩家自己填。最小 1 秒 (再小就等于连打查询,
+    -- 只会把节流额度吃光), 上限不设 —— 想几分钟看一眼也随他。
+    local gapLabel = T.Text(f, 9, C.faint)
+    gapLabel:SetPoint("TOPLEFT", capLabel, "BOTTOMLEFT", 0, -12)
+    gapLabel:SetWidth(72)
+    gapLabel:SetText("扫描间隔")
+
+    local gapBox = CreateFrame("EditBox", nil, f)
+    gapBox:SetSize(56, 16)
+    gapBox:SetPoint("LEFT", gapLabel, "RIGHT", 6, 0)
+    gapBox:SetFont(T.FontFile(), 11, "")
+    gapBox:SetTextColor(T.rgb(C.text))
+    gapBox:SetAutoFocus(false)
+    gapBox:SetNumeric(true)
+    gapBox:SetMaxLetters(5)                   -- 秒, 99999 秒 (27 小时) 已经远超需要
+    gapBox:SetTextInsets(1, 1, 0, 0)
+    gapBox:SetScript("OnEnterPressed", function(b)
+        -- 空着按回车 = 恢复默认间隔 (60 秒), 而不是被当成 0 抬到 1 秒
+        local txt = (b:GetText() or ""):gsub("%s", "")
+        local n = ns.AutoBuy.SetGap(txt == "" and nil or tonumber(txt))
+        -- 填 0 / 负数 / 乱码都归一化后回填, 玩家一眼能看出实际生效的是多少
+        b:SetText(tostring(n))
+        b:ClearFocus()
+        if autoCfg and autoCfg.paint then autoCfg.paint() end
+        ns.UI.Notify(format("扫描间隔改成 %d 秒", n), 3)
+    end)
+    gapBox:SetScript("OnEscapePressed", function(b) b:ClearFocus() end)
+
+    local gapUnit = T.Text(f, 9, C.faint)
+    gapUnit:SetPoint("LEFT", gapBox, "RIGHT", 4, 0)
+    gapUnit:SetText("秒")
+
     local hint = T.Text(f, 8, C.faint)
-    hint:SetPoint("TOPLEFT", capLabel, "BOTTOMLEFT", 0, -10)
-    hint:SetWidth(272)
+    hint:SetPoint("TOPLEFT", gapLabel, "BOTTOMLEFT", 0, -10)
+    hint:SetWidth(292)
     hint:SetWordWrap(false)
-    hint:SetText("打开拍卖行后每分钟扫一轮 · 单价不高于设定值就买 · 买多少由单轮上限决定")
+
+    local hint2 = T.Text(f, 8, C.faint)
+    hint2:SetPoint("TOPLEFT", hint, "BOTTOMLEFT", 0, -4)
+    hint2:SetWidth(292)
+    hint2:SetWordWrap(false)
+    hint2:SetText("最小 1 秒, 不设上限 · 填太小会一直查价 · 买多少看单轮上限")
 
     local close = MakeMiniButton(f, 54, 18, "关闭窗口")
     close:SetPoint("BOTTOMRIGHT", -14, 12)
@@ -3042,6 +3080,9 @@ local function BuildAutoCfg()
         state:SetText(ns.AutoBuy.Summary())
         state:SetTextColor(T.rgb(on and C.text or C.muted))
         capBox:SetText(tostring(math.floor(ns.AutoBuy.Cap() / 10000)))
+        local gap = ns.AutoBuy.Gap()
+        gapBox:SetText(tostring(gap))
+        hint:SetText(format("打开拍卖行后每 %d 秒扫一轮 · 有挂单且单价不高于设定值就买", gap))
     end
 
     f:Hide()

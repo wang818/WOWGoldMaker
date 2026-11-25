@@ -1,7 +1,7 @@
 ---------------------------------------------------------------------------
 -- WOWGoldMaker / AutoBuy.lua
--- 自动购买: 给一样材料设「单价上限」, 拍卖行开着时每分钟扫一轮,
--- 只要最低单价不高于上限就买 —— 不设目标数量, 有货就吃。
+-- 自动购买: 给一样材料设「单价上限」, 拍卖行开着时按设定的间隔扫一轮 (默认 60 秒,
+-- 可改成 1 秒 ~ 任意长), 只要最低单价不高于上限就买 —— 不设目标数量, 有货就吃。
 --
 -- **这是真花钱的功能**, 所以设了两道闸, 任何一道都能单独拦住:
 --   1) 总开关 db.autoBuyOn —— 默认关闭, 必须手动开, 关窗口/重登都保持关闭状态
@@ -25,7 +25,7 @@ local format = string.format
 
 -- 单笔最多下单这么多个。没有目标数量之后, 数量 = 「本轮剩余额度 ÷ 单价」——
 -- 碰上 1 铜的货就会算出上万个, 客户端吃不下 (背包也装不下)。200 约十组,
--- 想要更多就多等几轮, 每分钟一轮本来就够快。
+-- 想要更多就多等几轮 (间隔可以调到 1 秒, 补货很快)。
 local MAX_ORDER     = 200
 local BUY_TIMEOUT   = 10     -- 单笔购买最多等多久 (秒)
 local CONFIRM_DELAY = 0.8    -- Start 之后隔多久补 Confirm
@@ -90,10 +90,42 @@ function M.SetCap(copper)
     return DB().autoBuyCap
 end
 
+-- 扫描间隔 (秒)。最小 1 秒, 上限不设 —— 有人想 5 秒盯一次, 也有人想 10 分钟看一次,
+-- 都按填的来。防呆分两种: 不是数字 (清空/乱填) 退回默认 60; 是数字但小于 1
+-- (0 / 负数) 抬到 1 —— 玩家写 0 的意思是「尽快」, 不是「关掉」。
+local GAP_MIN, GAP_DEFAULT = 1, 60
+
 function M.Gap()
     local v = tonumber(DB().autoBuyGap)
-    if not v or v < 10 then return 60 end
-    return math.floor(v)
+    if not v or v ~= v then return GAP_DEFAULT end
+    v = math.floor(v)
+    if v < GAP_MIN then v = GAP_MIN end
+    return v
+end
+
+-- 改间隔。计时器是按旧间隔在跑的, 不重建就要等下一次才生效 ——
+-- 玩家改完盯着屏幕看不到变化, 会以为没保存。
+function M.SetGap(sec)
+    local v = tonumber(sec)
+    if not v or v ~= v then
+        v = GAP_DEFAULT                      -- 清空 / 非数字: 回默认
+    else
+        v = math.floor(v)
+        if v < GAP_MIN then v = GAP_MIN end  -- 0 / 负数: 1 秒 (最快)
+    end
+
+    DB().autoBuyGap = v
+
+    if ticker then
+        pcall(function() ticker:Cancel() end)
+        ticker = nil
+        if M.Enabled() then
+            -- 直接重建, 不走 Start(): Start 里那个「启动时先扫一轮」的 2 秒预热
+            -- 在这里只会多打一轮查询
+            ticker = C_Timer.NewTicker(v, function() M.Scan() end)
+        end
+    end
+    return v
 end
 
 --------------------------------------------------------------------------- 列表
@@ -472,8 +504,7 @@ end)
 function M.Summary()
     local AH = ns.Auction
     local cap = (AH and AH.MoneyEx) and AH.MoneyEx(M.Cap()) or tostring(M.Cap())
-    return format("%s · %d 件 · 单轮上限 %s%s",
+    return format("%s · %d 件 · 单轮上限 %s · 每 %d 秒",
         M.Enabled() and "|cff4dc87a开着|r" or "|cffeb6b6b关着|r",
-        M.Count(), cap,
-        M.Running() and " · 计时中" or "")
+        M.Count(), cap, M.Gap())
 end
