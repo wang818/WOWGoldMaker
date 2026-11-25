@@ -127,8 +127,9 @@ for (let i = 0; i < zoneStarts.length; i++) {
   }
 }
 
-// 坐标 "61403720" -> "61.4, 37.2"
-const prettyCoord = (c) => (c.slice(0, 2) / 10).toFixed(1) + ',' + (c.slice(4, 6) / 10).toFixed(1);
+// 坐标 key 是 8 位: xxxx yyyy, 每 4 位是「百分比 x100」(即 6140 = 61.40%)
+// "61403720" -> "61.4,37.2"   (之前按 2 位取, 结果全被缩小 10 倍, TomTom 标点全错)
+const prettyCoord = (c) => (c.slice(0, 4) / 100).toFixed(1) + ',' + (c.slice(4, 8) / 100).toFixed(1);
 const facCode = (f) => (f === 'Alliance' ? 'A' : f === 'Horde' ? 'H' : 'N');
 // ---------------------------------------------------------------- 4) 输出
 // 只留「真的有商人卖」的货: itemData 里还混着 600 多件没人卖的东西 (任务/掉落),

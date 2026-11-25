@@ -1,11 +1,9 @@
 #!/usr/bin/env node
 /**
- * 为 preview.html 生成「商人货架」演示数据 (抽样), 写进页面里两个标记之间。
+ * 为 preview.html 生成「商人货架」演示数据, 写进页面里两个标记之间。
  *
- * 真数据是 985 种货 / 829 位商人 / 10903 条关系, 全塞进预览页太重 (200KB),
- * 这里挑 160 件 + 它们涉及的商人, 足够看清排版和交互。
- *
- * 抽样规则: 本插件配方材料 (46) + 最多商人卖的 24 件 + 按价格等距补到 160。
+ * 用全量 (985 种货 / 829 位商人 / 10903 条关系, 约 130KB): 抽样版本会让大部分
+ * 真实物品名搜不到, 用户会以为搜索坏了。预览页是本地文件, 这点体积无所谓。
  *
  * 用法: node tools/gen_preview_shop.js
  */
@@ -60,23 +58,10 @@ const wanted = new Set();
   }
 }
 
-// ---- 抽样 ----
-const picked = new Map();
-const add = (r) => { if (r) picked.set(r.id, r); };
+// ---- 全量 ----
+const sample = [...rows].sort((a, b) => b.price - a.price);
 
-rows.filter((r) => wanted.has(r.id)).forEach(add);
-[...rows].sort((a, b) => b.npcs.length - a.npcs.length).slice(0, 24).forEach(add);
-
-const byPrice = [...rows].sort((a, b) => b.price - a.price);
-const need = Math.max(0, 160 - picked.size);
-for (let i = 0; i < need; i++) {
-  const r = byPrice[Math.floor((i * byPrice.length) / need)];
-  add(r);
-}
-
-const sample = [...picked.values()].sort((a, b) => b.price - a.price);
-
-// ---- 只留抽样物品的商人 ----
+// ---- 涉及的商人 ----
 const npcIDs = new Set();
 for (const r of sample) for (const id of r.npcs) npcIDs.add(id);
 

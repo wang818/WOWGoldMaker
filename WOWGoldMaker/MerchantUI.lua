@@ -131,6 +131,21 @@ local function NpcName(rec)
 end
 M.NpcName = NpcName
 
+-- 客户端回包拿到的本地化名顺手存进存档: 浏览过的物品下次还能按中文搜到,
+-- 不用等客户端再回一次包 (985 件名字全存下来也就几十 KB)。
+local function PersistedName(id)
+    local db = ns.DB and ns.DB()
+    local t = db and db.itemNames
+    return t and t[id]
+end
+
+local function RememberName(id, name)
+    local db = ns.DB and ns.DB()
+    if not db then return end
+    db.itemNames = db.itemNames or {}
+    db.itemNames[id] = name
+end
+
 -- 物品名字: 只在「正在画这一行」时向客户端要, 不要在筛选/排序里调 ——
 -- 那会对 985 件物品同时发查询, 服务器直接给你限流。
 -- 每件物品 30 秒最多问一次: 列表每 2 秒重画一遍, 光靠 NPC.Info 自带的 2 秒节流
@@ -139,7 +154,7 @@ local nameAskedAt = {}
 local pendingName = 0        -- 本轮有几行还没拿到本地化名 (ticker 靠它决定要不要重画)
 
 local function ItemName(rec, allowRequest)
-    local hit = itemNameCache[rec.id]
+    local hit = itemNameCache[rec.id] or PersistedName(rec.id)
     if hit then return hit end
     pendingName = pendingName + 1
     if allowRequest and ns.NPC and ns.NPC.Info then
@@ -150,6 +165,7 @@ local function ItemName(rec, allowRequest)
             local n = ns.NPC.Info(rec.id)
             if type(n) == "string" and n ~= "" then
                 itemNameCache[rec.id] = n    -- 只缓存真名, 英文兜底不缓存 (等本地化名回包)
+                RememberName(rec.id, n)
                 return n
             end
         end
@@ -159,8 +175,14 @@ local function ItemName(rec, allowRequest)
 end
 M.ItemName = function(rec) return ItemName(rec, true) end
 
-local function KnownName(rec)
-    return itemNameCache[rec.id] or (rec.name ~= "" and rec.name) or ("#" .. tostring(rec.id))
+-- 搜索要比两串名字: 客户端本地化名 (中文) 和快照英文名。
+-- 只比其中一个的话, 中文客户端搜英文搜不到、搜中文又得等回包 —— 两边都试才算全。
+local function NameHas(rec, q)
+    local loc = itemNameCache[rec.id] or PersistedName(rec.id)
+    if type(loc) == "string" and loc ~= "" and loc:lower():find(q, 1, true) then return true end
+    local raw = rec.name
+    if type(raw) == "string" and raw ~= "" and raw:lower():find(q, 1, true) then return true end
+    return false
 end
 
 --------------------------------------------------------------------------- 数据: 建索引
@@ -267,7 +289,18 @@ function M.Filter(q, onlyMats)
     if q ~= "" then
         npcHit = {}
         for id, npc in pairs(d.npcs) do
-            if (NpcName(npc) or ""):lower():find(q, 1, true) then npcHit[id] = true end
+            local hit = false
+            local loc = NpcName(npc)
+            if type(loc) == "string" and loc:lower():find(q, 1, true) then
+                hit = true
+            else
+                -- 商人名同理: 本地化名之外也认快照里的英文名
+                local raw = npc.name
+                if type(raw) == "string" and raw ~= "" and raw:lower():find(q, 1, true) then
+                    hit = true
+                end
+            end
+            if hit then npcHit[id] = true end
         end
     end
 
@@ -278,7 +311,7 @@ function M.Filter(q, onlyMats)
             local hit = true
             if q ~= "" then
                 hit = false
-                if (KnownName(rec) or ""):lower():find(q, 1, true) then
+                if NameHas(rec, q) then
                     hit = true
                 elseif npcHit then
                     for _, npcID in ipairs(rec.npcs) do
@@ -739,17 +772,25 @@ local function NewNpcRow()
         local x, y = (npc.coord or ""):match("^([%d%.]+),([%d%.]+)$")
         local name = NpcName(npc)
 
+        -- 快照里的坐标已经是地图百分比 (61.4 = 61.4%), 和 TomTom 收的同一单位,
+        -- 不要再除 100 —— 除完点会跑到地图左上角
+        local wx, wy = tonumber(x), tonumber(y)
         local marked = false
-        if TomTom and TomTom.AddWaypoint and x and npc.zone and npc.zone > 0 then
+        if TomTom and TomTom.AddWaypoint and wx and wy and npc.zone and npc.zone > 0 then
             marked = pcall(function()
-                TomTom:AddWaypoint(npc.zone, tonumber(x) / 100, tonumber(y) / 100, { title = name })
+                TomTom:AddWaypoint(npc.zone, wx, wy, { title = name })
             end)
         end
         if marked then
             ns.Print(format("|cff29c7a8已标点|r %s · %s %s", name, zone, npc.coord))
         else
-            ns.Print(format("%s |cff8a929e·|r %s %s |cff8a929e(/way %s %s)|r",
-                name, zone, npc.coord, x or "?", y or "?"))
+            -- /way 吃 0-100 的整数, 四舍五入到整格
+            local cmd = "坐标未知"
+            if wx and wy then
+                cmd = format("/way %d %d", math.floor(wx + 0.5), math.floor(wy + 0.5))
+            end
+            ns.Print(format("%s |cff8a929e·|r %s %s |cff8a929e%s|r",
+                name, zone, npc.coord, cmd))
         end
     end)
     return r
@@ -880,7 +921,18 @@ Render = function()
 
     if emptyText then
         local d = M.Index()
-        emptyText:SetText(d.err or "没有匹配的物品 —— 换个关键词试试")
+        local q = (searchEdit and searchEdit:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", "")
+        if d.err then
+            emptyText:SetText(d.err)
+        elseif q ~= "" and M.Warming() then
+            emptyText:SetText(format("没找到「%s」 —— 物品名还在后台加载, 稍等再搜", q))
+        elseif q ~= "" then
+            emptyText:SetText(format("没找到「%s」 —— 试试英文名, 或输入商人名", q))
+        elseif M.onlyMats then
+            emptyText:SetText("这批货里没有材料 —— 点「材料」切回全部")
+        else
+            emptyText:SetText("没有匹配的物品 —— 换个关键词试试")
+        end
         emptyText:SetShown(view.n == 0)
     end
     UpdateThumb()
@@ -892,6 +944,9 @@ RefreshCount = function()
     local total = #d.items
     if #filtered == total then
         countText:SetText(format("%d 种货 · %d 位商人 · %d 条货架", total, d.npcCount, d.pairs))
+    elseif #filtered == 0 then
+        -- 0 条时把数字标红, 和列表里的空状态对上, 免得只看到「筛出」两个字
+        countText:SetText(format("|cffeb6b6b筛出 0 种货|r |cff8a929e/ 共 %d|r", total))
     else
         countText:SetText(format("筛出 %d 种货 |cff8a929e/ 共 %d|r", #filtered, total))
     end
@@ -919,6 +974,58 @@ ApplyQuery = function(resetScroll)
     Render()
 end
 M.Refresh = function() if frame then ApplyQuery() end end
+
+--------------------------------------------------------------------------- 名字预热
+
+-- 客户端本地就有全量物品名 (按客户端语言), 但要一件一件问 GetItemInfo 才拿得到。
+-- 不预热的话, 中文客户端第一次搜中文必然 0 条 —— 快照里只有英文名。
+-- 窗口打开后后台慢速扫一遍 (0.5s 问 3 件, 约 3 分钟问完 985 件), 拿到的名字写进
+-- 存档, 之后再开窗口秒出。慢是为了别在开窗口那一下把物品查询打成一片。
+local warmIdx, warmRunning, warmLastTry = 0, false, 0
+
+function M.Warm()
+    if warmRunning then return end
+    local d = M.Index()
+    if warmIdx >= #d.items then return end
+    warmRunning = true
+
+    local step
+    step = function()
+        if not (frame and frame:IsShown()) then
+            warmRunning = false          -- 窗口关了先停, 下次打开接着问
+            return
+        end
+        local asked = 0
+        while warmIdx < #d.items and asked < 3 do
+            warmIdx = warmIdx + 1
+            local rec = d.items[warmIdx]
+            if not (itemNameCache[rec.id] or PersistedName(rec.id)) then
+                asked = asked + 1
+                ItemName(rec, true)
+            end
+        end
+        if warmIdx < #d.items then
+            C_Timer.After(0.5, step)
+        else
+            warmRunning = false
+            -- 扫完一轮: 名字可能刚好到, 重画一次 (有搜索词时结果会跟着变)
+            if frame and frame:IsShown() then pcall(ApplyQuery) end
+        end
+    end
+    step()
+end
+
+-- 搜不到东西时再扫一轮 (名字可能是这一轮才补上的)。60 秒冷却, 免得边打字边重扫。
+function M.WarmRetry()
+    if warmRunning then return end
+    local now = GetTime() or 0
+    if now - warmLastTry < 60 then return end
+    warmLastTry = now
+    warmIdx = 0
+    M.Warm()
+end
+
+M.Warming = function() return warmRunning end
 
 --------------------------------------------------------------------------- 界面
 
@@ -967,6 +1074,8 @@ local function BuildSearch(parent)
         searchHint:SetShown(t == "")
         if clearBtn then clearBtn:SetShown(t ~= "") end
         ApplyQuery(true)
+        -- 0 条时可能是本地化名还没问到, 让预热再跑一轮 (内部有 60 秒冷却)
+        if t ~= "" and #filtered == 0 then pcall(M.WarmRetry) end
     end)
     searchEdit = eb
 
@@ -1028,8 +1137,11 @@ local function BuildList(parent)
         Render()
     end)
 
-    emptyText = T.Text(listContent, F_ITEM, C.faint)
-    emptyText:SetPoint("TOP", listContent, "TOP", 0, -40)
+    -- 空状态挂在列表区外面: listContent 的高度 = 视图总高, 筛不出货时只有 1px,
+    -- 挂在里面会被 ScrollFrame 裁掉 —— 表现就是「页面一片空白, 却写着筛出 N 种货」
+    emptyText = T.Text(parent, F_ITEM, C.muted)
+    emptyText:SetPoint("CENTER", parent, "CENTER", -4, -16)
+    emptyText:SetJustifyH("CENTER")
     emptyText:SetWordWrap(false)
     emptyText:SetText("没有匹配的物品 —— 换个关键词试试")
     emptyText:Hide()
@@ -1114,7 +1226,10 @@ function ns.MerchantUI.Build()
         f:SetPoint("CENTER", UIParent, "CENTER", -math.floor(pw * 0.25), 0)
     end
 
-    f:SetScript("OnShow", function() ApplyQuery() end)
+    f:SetScript("OnShow", function()
+        ApplyQuery()
+        pcall(M.Warm)          -- 后台补物品名 (存档里没有的才问)
+    end)
 
     -- 物品名字要等客户端数据回包, 回包前先用快照里的英文名。
     -- 只有「还有行没拿到本地化名」时才重画 (pendingName), 否则什么都不做。
