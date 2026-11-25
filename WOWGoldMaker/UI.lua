@@ -2543,18 +2543,21 @@ local function BuildNpcEditor()
         eb:SetScript("OnTextChanged", RefreshHint)
         eb:SetScript("OnEditFocusLost", Normalize)
         eb:SetScript("OnEscapePressed", function(b) b:ClearFocus(); f:Hide() end)
-        -- Tab / 回车 往后跳一格, 铜格子回车 = 保存
-        local function Next()
-            if idx < 3 then
-                local nxt = boxes[idx + 1]
-                nxt:SetFocus()
-                if nxt.HighlightText then nxt:HighlightText() end
-            else
-                Save()
-            end
+
+        local function Jump(n)
+            if n > 3 then n = 1 end
+            local nxt = boxes[n]
+            nxt:SetFocus()
+            if nxt.HighlightText then nxt:HighlightText() end
         end
-        eb:SetScript("OnTabPressed", Next)
-        eb:SetScript("OnEnterPressed", Next)
+
+        -- Tab 往后跳一格, 铜格再按 Tab 回到金格 (像个表单那样转圈);
+        -- 回车才是「下一格 / 铜格保存」—— 打开时焦点本来就落在铜格,
+        -- 若 Tab 也等于保存, 顺手按一下就把价写上去了
+        eb:SetScript("OnTabPressed", function() Jump(idx + 1) end)
+        eb:SetScript("OnEnterPressed", function()
+            if idx < 3 then Jump(idx + 1) else Save() end
+        end)
     end
 
     local save = MakeMiniButton(f, 54, 18, "保存")
@@ -2610,8 +2613,11 @@ function ns.UI.EditNpcPrice(itemID, name, cell)
     -- 居中盖在面板上: 材料行通常贴着列表顶部, 若跟着行锚会被顶出面板外面
     e:SetPoint("CENTER", frame, "CENTER", 0, 0)
     e:Show()
-    e.boxes[1]:SetFocus()
-    if e.boxes[1].HighlightText then e.boxes[1]:HighlightText() end
+    -- 默认落在铜格: 记的多半是几银几铜 (商人价很少上金), 金位基本不动,
+    -- 打开就能直接改尾数, 不用先按两下 Tab
+    local box = e.boxes[3]
+    box:SetFocus()
+    if box.HighlightText then box:HighlightText() end
 end
 
 --------------------------------------------------------------------------- 专业图标补全

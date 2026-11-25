@@ -197,6 +197,13 @@
     font-size: 11px; font-weight: 400; color: var(--text);
   }
   .ne-cell span { flex: 0 0 14px; font-size: 9px; color: var(--faint); }
+  /* 打开时焦点就落在铜格 (对应游戏里的 SetFocus): 描边 + 一根闪动的光标 */
+  .ne-cell b.cur { box-shadow: inset 0 0 0 1px rgba(232,194,90,.55); }
+  .ne-cell b.cur::after {
+    content: ""; width: 1px; height: 12px; margin-left: 2px; background: var(--gold);
+    animation: necaret 1s steps(1) infinite;
+  }
+  @keyframes necaret { 0%, 50% { opacity: 1; } 50.01%, 100% { opacity: 0; } }
   /* 单位标签本身也要钱币色 (金/银/铜各一色) */
   .ne-cell .mg { color: #ffd100; }
   .ne-cell .ms { color: #e6edf5; }
@@ -410,7 +417,7 @@
 </head>
 <body>
 
-<h1><b>WOWGOLDMAKER</b> · 单页预览 (v0.8.6)</h1>
+<h1><b>WOWGOLDMAKER</b> · 单页预览 (v0.8.7)</h1>
 
 <div class="window">
   <div class="shadow"></div>
@@ -457,7 +464,7 @@
       <div class="ne-row">
         <div class="ne-cell"><b>1</b><span class="mg">金</span></div>
         <div class="ne-cell"><b>20</b><span class="ms">银</span></div>
-        <div class="ne-cell"><b>5</b><span class="mc">铜</span></div>
+        <div class="ne-cell"><b class="cur">5</b><span class="mc">铜</span></div>
       </div>
       <div class="ne-hint" style="color:var(--gold)">= 1金20银5铜</div>
       <div class="ne-btns">
@@ -478,7 +485,7 @@
 </div>
 
 <div class="settings">
-  <h2><span>金币工坊</span> v0.8.6</h2>
+  <h2><span>金币工坊</span> v0.8.7</h2>
   <div class="sub">魔兽世界无限服 · 金币工具箱</div>
   <hr>
   <div class="row" id="row1"><div class="box"><span class="check">✓</span></div><span class="lbl">登录后自动呼出主界面</span></div>
@@ -1048,7 +1055,11 @@
   const $npcEditor = document.getElementById("npcEditor");
   function setEditorMoney(g, s, c) {
     const vals = [g, s, c];
-    $npcEditor.querySelectorAll(".ne-cell b").forEach((el, i) => { el.textContent = vals[i]; });
+    const boxes = $npcEditor.querySelectorAll(".ne-cell b");
+    boxes.forEach((el, i) => { el.textContent = vals[i]; });
+    /* 默认选中铜格 —— 商人价多半是几银几铜, 金位基本不动 */
+    boxes.forEach(el => el.classList.remove("cur"));
+    if (boxes[2]) boxes[2].classList.add("cur");
     const hint = $npcEditor.querySelector(".ne-hint");
     hint.textContent = "= " + moneyFull(g, s, c);
     hint.style.color = "var(--gold)";
