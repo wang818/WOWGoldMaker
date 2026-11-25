@@ -2323,7 +2323,9 @@ local function BuildNpcEditor()
 
     -- 挂在主面板下: 跟着面板一起缩放/移动, 层级自然压在面板所有行上面
     -- (父控件是缩放过的, 若挂 UIParent 会和面板对不齐)
-    local f = T.Glass(frame, 300, 126)
+    -- 底用 panel (不透明) 而不是 card (白 5% 半透明): 弹层要盖住下面一整列材料行,
+    -- 半透明底会把行文字透上来, 看着像糊在一起
+    local f = T.Glass(frame, 300, 126, "panel")
     f:SetFrameStrata(ns.DB().strata or "DIALOG")
     f:SetFrameLevel((frame:GetFrameLevel() or 200) + 20)
     f:SetClampedToScreen(true)
@@ -2360,6 +2362,27 @@ local function BuildNpcEditor()
     hint:SetWidth(272)
     hint:SetWordWrap(false)
 
+    local HINT_DEFAULT = "1金20银5铜 / 20银 / 1.5金 / 80铜 · 只写数字按银算 · 清空则删除"
+
+    -- 边打边把「值多少金多少银多少铜」写出来: 输入框里允许简写 (120 = 1金20银),
+    -- 下面这行负责把它翻成看得懂的整钱, 免得玩家不知道自己填的到底是多少
+    local function RefreshHint()
+        local text = box:GetText() or ""
+        if text:gsub("%s", "") == "" then
+            hint:SetTextColor(T.rgb(C.faint))
+            hint:SetText(HINT_DEFAULT)
+            return
+        end
+        local copper, err = ns.NPC.ParseMoney(text)
+        if not copper then
+            hint:SetTextColor(T.rgb(C.red))
+            hint:SetText("看不懂: " .. tostring(err))
+        else
+            hint:SetTextColor(T.rgb(C.gold))
+            hint:SetText("= " .. ns.NPC.MoneyEx(copper))
+        end
+    end
+
     local function Save()
         local id = f.itemID
         if not id then f:Hide(); return end
@@ -2381,6 +2404,7 @@ local function BuildNpcEditor()
         RefreshNpcFor(id)
     end
 
+    box:SetScript("OnTextChanged", RefreshHint)
     box:SetScript("OnEnterPressed", Save)
     box:SetScript("OnEscapePressed", function() f:Hide() end)
 
@@ -2403,6 +2427,7 @@ local function BuildNpcEditor()
     cancel:SetScript("OnClick", function() f:Hide() end)
 
     f.box, f.who, f.hint = box, who, hint
+    f.refreshHint = RefreshHint
     f:Hide()
     editor = f
     return editor
@@ -2421,10 +2446,14 @@ function ns.UI.EditNpcPrice(itemID, name, cell)
     e.who:SetText(name or ("物品 #" .. tostring(itemID)))
 
     local cur = ns.NPC and ns.NPC.Buy(itemID)
-    e.box:SetText(cur and ns.NPC.Money(cur) or "")
+    -- 输入框里直接写成完整的「多少金多少银多少铜」: 12金0银5铜 也把 0 写出来,
+    -- 用 AH.Money 那种简写会把铜位和 0 银吞掉, 玩家看不出记的是不是自己想的那笔
+    e.box:SetText(cur and ns.NPC.MoneyEx(cur) or "")
     e.box:SetCursorPosition(0)
-    e.hint:SetTextColor(T.rgb(C.faint))
-    e.hint:SetText("1金20银 / 20银 / 1.5金 / 80铜 · 只写数字按银算 · 清空则删除")
+    if e.refreshHint then e.refreshHint() else
+        e.hint:SetTextColor(T.rgb(C.faint))
+        e.hint:SetText("1金20银5铜 / 20银 / 1.5金 / 80铜 · 只写数字按银算 · 清空则删除")
+    end
 
     e:ClearAllPoints()
     -- 居中盖在面板上: 材料行通常贴着列表顶部, 若跟着行锚会被顶出面板外面

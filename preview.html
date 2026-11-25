@@ -179,7 +179,7 @@
     width: 300px; height: 126px;
     transform: translate(-50%, -50%);
     border-radius: 10px;
-    background: linear-gradient(160deg, rgba(38,34,28,.98), rgba(18,18,21,.98));
+    background: linear-gradient(160deg, #23201a, #12131a);
     box-shadow: 0 14px 34px rgba(0,0,0,.6), inset 0 0 0 1px rgba(232,194,90,.20);
     padding: 12px 14px; box-sizing: border-box;
     display: none; z-index: 5;
@@ -402,7 +402,7 @@
 </head>
 <body>
 
-<h1><b>WOWGOLDMAKER</b> · 单页预览 (v0.8.2)</h1>
+<h1><b>WOWGOLDMAKER</b> · 单页预览 (v0.8.3)</h1>
 
 <div class="window">
   <div class="shadow"></div>
@@ -446,8 +446,8 @@
     <div class="npc-editor" id="npcEditor">
       <div class="ne-title">NPC 购买价</div>
       <div class="ne-who">空瓶</div>
-      <div class="ne-box">1银20铜<i></i></div>
-      <div class="ne-hint">1金20银 / 20银 / 1.5金 / 80铜 · 只写数字按银算 · 清空则删除</div>
+      <div class="ne-box">1金20银5铜<i></i></div>
+      <div class="ne-hint" style="color:var(--gold)">= 1金20银5铜</div>
       <div class="ne-btns">
         <button>取消</button><button>清除</button><button class="primary">保存</button>
       </div>
@@ -466,7 +466,7 @@
 </div>
 
 <div class="settings">
-  <h2><span>金币工坊</span> v0.8.2</h2>
+  <h2><span>金币工坊</span> v0.8.3</h2>
   <div class="sub">魔兽世界无限服 · 金币工具箱</div>
   <hr>
   <div class="row" id="row1"><div class="box"><span class="check">✓</span></div><span class="lbl">登录后自动呼出主界面</span></div>
@@ -948,6 +948,14 @@
   };
 
   /* 点材料行的「买价」格子 → 弹出录入框 (对应 ns.UI.EditNpcPrice) */
+  /* 输入框里写成完整的「多少金多少银多少铜」, 对应游戏里的 ns.NPC.MoneyEx */
+  function moneyFull(s) {
+    const g = /(\d+)金/.exec(s), si = /(\d+)银/.exec(s), c = /(\d+)铜/.exec(s);
+    const G = g ? +g[1] : 0, S = si ? +si[1] : 0, C = c ? +c[1] : 0;
+    if (G > 0) return `${G}金${S}银${C}铜`;
+    if (S > 0) return `${S}银${C}铜`;
+    return `${C}铜`;
+  }
   const $npcEditor = document.getElementById("npcEditor");
   $list.addEventListener("click", e => {
     const mb = e.target.closest && e.target.closest(".mbuy");
@@ -955,8 +963,12 @@
     e.stopPropagation();
     const row = mb.closest(".mline");
     $npcEditor.querySelector(".ne-who").textContent = row ? row.dataset.n : "";
-    const cur = mb.classList.contains("empty") ? "1银" : mb.textContent.replace(/^\s*买\s*/, "");
+    const raw = mb.classList.contains("empty") ? "1银" : mb.textContent.replace(/^\s*买\s*/, "");
+    const cur = moneyFull(raw);
     $npcEditor.querySelector(".ne-box").innerHTML = cur + "<i></i>";
+    const hint = $npcEditor.querySelector(".ne-hint");
+    hint.textContent = "= " + cur;
+    hint.style.color = "var(--gold)";
     $npcEditor.classList.add("on");
   });
   $npcEditor.querySelectorAll(".ne-btns button").forEach(b => {

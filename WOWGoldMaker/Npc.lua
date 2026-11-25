@@ -30,6 +30,14 @@ local function Money(c)
 end
 NPC.Money = Money
 
+-- 精确到铜的写法 (1金20银0铜 / 20银0铜 / 5铜)。录买价这类"要看清每一位"的地方用它:
+-- Money 会把铜位、以及 0 银 0 铜 吞掉, 玩家看不出到底是 12金 还是 12金34银5铜
+local function MoneyEx(c)
+    if ns.Auction and ns.Auction.MoneyEx then return ns.Auction.MoneyEx(c) end
+    return Money(c)
+end
+NPC.MoneyEx = MoneyEx
+
 --------------------------------------------------------------------------- 卖给商人
 
 local sellCache = {}    -- itemID -> 铜 (false = 已知不可卖给商人)

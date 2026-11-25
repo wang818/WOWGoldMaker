@@ -87,8 +87,9 @@ function T.Glass(parent, w, h, tex)
     bg:SetAllPoints(true)
     local file = tex or "card"
     bg:SetTexture(T.PATH .. file)
-    -- 卡片会随面板宽度横向拉伸, 用九宫格保住圆角 (sq 是纯色块, 不需要)
-    if file == "card" then
+    -- card / panel 都是带圆角的贴图, 会随尺寸横向拉伸, 用九宫格保住圆角
+    -- (sq 是纯色块, 不需要; 硬套九宫格反而会把纯色块切出接缝)
+    if file ~= "sq" then
         pcall(function()
             bg:SetTextureSliceMargins(24, 24, 24, 24)
             bg:SetTextureSliceMode(Enum.UITextureSliceMode.Stretched)
