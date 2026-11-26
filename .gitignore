@@ -25,3 +25,7 @@ tools/*.png
 
 # 中英物品名源库 (900KB, 只在重生成 itemnames_zh.txt 时手动下载)
 tools/data/rdbitems.lua
+
+# codegraph
+.cursor
+.codegraph
