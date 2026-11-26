@@ -29,9 +29,10 @@ local SCALE_MAX       = 2.6    -- 缩放上限, 防止 4K 下贴图糊成一片
 local PAD      = 20      -- 左右内边距
 local TOP_Y    = -10     -- 顶栏顶部
 local TAB_Y    = -44     -- 页签行顶部
+local TAB2_Y   = -68     -- 专业页签下面那一行: 材料汇总 / 商人 / 自动 / 赚金
 local TAB_H    = 20      -- 页签 / 小按钮高度
 local TAB_W    = 78      -- 专业页签宽度
-local LIST_Y   = -72     -- 列表区顶部
+local LIST_Y   = -96     -- 列表区顶部 (按钮行占了一行, 整体下移)
 local LIST_BOT = 10      -- 列表区距面板底部
 -- 列表改成「可变高的块」: 每条配方 = 一行商品 + 若干行材料 (一样材料一行),
 -- 材料行左缩进一个商品图标的宽度, 空出来的那一段画从属虚线连回商品行。
@@ -93,6 +94,23 @@ local noticeFrame, noticeText, noticeToken   -- 页面内浮层提示
 
 local curKey  = "first-aid"   -- 当前专业
 local curMode = "list"        -- "list" 配方 | "mats" 材料汇总
+local profitFilter = false    -- 赚金查价后: 只显示盈利的配方
+local profitCache  = {}       -- itemID -> 净利润 (当前专业的赚金查价结果)
+local profitRun    = 0        -- 赚金查价轮次 (点「全部」时取消)
+local profitBusyItem = nil    -- 正在查价的物品 (行上按钮显示「查价中」)
+local profitByProf = {}       -- 按专业缓存: key -> { filter = bool, cache = {item -> profit}, at = 查价完成时间 }
+local PROFIT_TTL = 3600       -- 赚金查价结果缓存 1 小时, 有效期内不再重复查
+
+-- 取/建某个专业的赚金状态 (切换专业时保留各自的查价结果和过滤开关)
+local function ProfitState(key)
+    key = key or curKey
+    local st = profitByProf[key]
+    if not st then
+        st = { filter = false, cache = {}, at = nil }
+        profitByProf[key] = st
+    end
+    return st
+end
 
 -- 颜色码剥离: 行内文字带 |cff... 前缀和 ×N 的灰色段, 塞进 tooltip 前要还原成纯文字
 local function PlainText(s)
@@ -682,6 +700,11 @@ local function BuildTabs(f)
 
         tab:SetScript("OnClick", function()
             curKey = prof.key
+            -- 恢复这个专业上次的赚金状态: 查过就继续显示赚金后的列表
+            local st = ProfitState(curKey)
+            profitFilter = st.filter
+            profitCache = st.cache
+            if refs.profitBtn then refs.profitBtn.text:SetText(profitFilter and "全部" or "赚金") end
             if UpdateTabs then UpdateTabs() end
             if RenderList then RenderList() end
         end)
@@ -695,11 +718,10 @@ local function BuildTabs(f)
         tabs[prof.key] = tab
     end
 
-    -- 右侧 (从右往左): 材料汇总 / 商人 / 自动购买
-    -- 商人货架和自动购买列表都是独立窗口 (MerchantUI.lua), 这里只放入口 ——
-    -- 主面板一行塞不下页签了。三个按钮用链式锚点从右往左排, 宽度加起来不挤到专业页签。
+    -- 专业页签下面一行 (从右往左): 材料汇总 / 商人 / 自动购买 / 赚金
+    -- 商人货架和自动购买列表都是独立窗口, 这里只放入口
     local sw = MakeMiniButton(f, 58, TAB_H, "材料汇总")
-    sw:SetPoint("TOPRIGHT", f, "TOPRIGHT", -(PAD - 6), TAB_Y)
+    sw:SetPoint("TOPRIGHT", f, "TOPRIGHT", -(PAD - 6), TAB2_Y)
     sw:SetScript("OnClick", function()
         curMode = (curMode == "list") and "mats" or "list"
         sw.text:SetText(curMode == "list" and "材料汇总" or "配方列表")
@@ -753,6 +775,48 @@ local function BuildTabs(f)
         GameTooltip:Hide()
     end)
     refs.autoBtn = autoBtn
+
+    -- 赚钱: 和赚金一样的逻辑 (逐条查价, 只保留赚钱的), 常驻
+    local earnBtn = MakeMiniButton(f, 40, TAB_H, "赚钱")
+    earnBtn:SetPoint("RIGHT", autoBtn, "LEFT", -6, 0)
+    earnBtn:SetScript("OnClick", function() ns.UI.FindProfit() end)
+    earnBtn:SetScript("OnEnter", function(s)
+        s.bg:SetVertexColor(1, 1, 1, 0.20)
+        s.text:SetTextColor(T.rgb(C.text))
+        GameTooltip:SetOwner(s, "ANCHOR_CURSOR_RIGHT")
+        GameTooltip:ClearLines()
+        GameTooltip:AddLine("赚钱", 1, 0.82, 0.35)
+        GameTooltip:AddLine("|cff8a929e重新查当前专业所有配方, 只保留赚钱的|r", 0.82, 0.84, 0.88)
+        GameTooltip:AddLine("|cff8a929e左边的「赚金/全部」按钮可恢复完整列表|r", 0.62, 0.65, 0.70)
+        GameTooltip:Show()
+    end)
+    earnBtn:SetScript("OnLeave", function(s)
+        s.bg:SetVertexColor(1, 1, 1, 0.10)
+        s.text:SetTextColor(T.rgb(C.muted))
+        GameTooltip:Hide()
+    end)
+    refs.earnBtn = earnBtn
+
+    -- 赚金/全部: 切换过滤状态 (查过赚金后显示「全部」, 点击恢复)
+    local profitBtn = MakeMiniButton(f, 40, TAB_H, "赚金")
+    profitBtn:SetPoint("RIGHT", earnBtn, "LEFT", -6, 0)
+    profitBtn:SetScript("OnClick", function() ns.UI.ToggleProfit() end)
+    profitBtn:SetScript("OnEnter", function(s)
+        s.bg:SetVertexColor(1, 1, 1, 0.20)
+        s.text:SetTextColor(T.rgb(C.text))
+        GameTooltip:SetOwner(s, "ANCHOR_CURSOR_RIGHT")
+        GameTooltip:ClearLines()
+        GameTooltip:AddLine("找到赚金项目", 1, 0.82, 0.35)
+        GameTooltip:AddLine("|cff8a929e查当前专业所有配方, 只留赚钱的; 再点恢复完整列表|r", 0.82, 0.84, 0.88)
+        GameTooltip:AddLine("|cff8a929e需要拍卖行窗口打开 · 配方多时要等一会儿|r", 0.62, 0.65, 0.70)
+        GameTooltip:Show()
+    end)
+    profitBtn:SetScript("OnLeave", function(s)
+        s.bg:SetVertexColor(1, 1, 1, 0.10)
+        s.text:SetTextColor(T.rgb(C.muted))
+        GameTooltip:Hide()
+    end)
+    refs.profitBtn = profitBtn
 end
 
 UpdateTabs = function()
@@ -1700,11 +1764,22 @@ function ns.UI.RefreshNpcAll()
     end
 end
 
-RenderList = function()
+RenderList = function(keepScroll)
     if not listContent or not scroll then return end
     if not (ns.Prof and ns.Prof.byKey and ns.Prof.byKey[curKey]) then return end
 
     local recipes = (ns.Prof.Get and ns.Prof.Get(curKey)) or {}
+
+    -- 赚金模式: 每查完一行就判断 —— 未查价的先留着, 查过且不赚钱的隐藏, 保持原顺序
+    if profitFilter then
+        local kept = {}
+        for _, rec in ipairs(recipes) do
+            local p = profitCache[rec.item]
+            if p == nil or p > 0 then kept[#kept + 1] = rec end
+        end
+        recipes = kept
+    end
+
     local items
 
     if curMode == "mats" then
@@ -1775,7 +1850,13 @@ RenderList = function()
                 r.npcHit:Hide()     -- 配方模式这格是 NPC 盈亏, 不给点
                 AnchorRowRight(r, true)
                 r.btn.busy = false
-                r.btn.text:SetText("查价")
+                if profitBusyItem and rec.item == profitBusyItem then
+                    r.btn.text:SetText("查价中")
+                    r.btn:Disable()
+                else
+                    r.btn.text:SetText("查价")
+                    r.btn:Enable()
+                end
                 r.title:SetText((rec.name or "?") .. made)
                 r.req:SetText(format("|cff8a929e[%d]|r", rec.req or 0))
                 SetRowIcon(r, rec.item)
@@ -1814,7 +1895,7 @@ RenderList = function()
 
     listContent:SetHeight(math.max(1, y + 4))
 
-    scroll:SetVerticalScroll(0)
+    scroll:SetVerticalScroll(keepScroll and (scroll:GetVerticalScroll() or 0) or 0)
     if UpdateThumb then UpdateThumb() end
 end
 
@@ -3253,8 +3334,122 @@ end
 
 --------------------------------------------------------------------------- 自动购买设置 (已并入列表页)
 
+-- 赚金: 逐条查价, 每查完一行立即判断 (赚钱留下, 不赚钱隐藏), 保持原顺序不排序。
+-- 点「全部」可中止并恢复完整列表。
+function ns.UI.FindProfit()
+    local st = ProfitState(curKey)
+    local now = (type(GetTime) == "function" and GetTime()) or 0
+
+    -- 1 小时内查过: 直接用缓存过滤, 不再逐条查价
+    if st.at and st.cache and next(st.cache) and (now - st.at) <= PROFIT_TTL then
+        profitRun = profitRun + 1          -- 取消可能还在跑的上一轮
+        profitBusyItem = nil
+        profitCache = st.cache
+        profitFilter = true
+        st.filter = true
+        if refs.profitBtn then refs.profitBtn.text:SetText("全部") end
+        if RenderList then RenderList() end
+        if scroll then scroll:SetVerticalScroll(0) end
+        ns.UI.Notify(format("使用 %d 分钟前的赚金缓存 (1 小时内有效)",
+            math.floor((now - st.at) / 60)), 5)
+        return
+    end
+
+    local list = (ns.Prof and ns.Prof.Get and ns.Prof.Get(curKey)) or {}
+    if #list == 0 then
+        ns.UI.Notify("当前专业没有配方", 3)
+        return
+    end
+
+    local AH = ns.Auction
+    if not (AH and AH.CheckRecipe and AH.MoneyEx) then
+        ns.UI.Notify("拍卖行模块未加载", 3)
+        return
+    end
+    local ok, why = AH.CanQuery()
+    if not ok then
+        ns.UI.Notify(why .. " —— 先打开拍卖行", 4)
+        return
+    end
+
+    profitRun = profitRun + 1
+    local run = profitRun
+    st.cache = {}
+    profitCache = st.cache
+    profitFilter = true
+    st.filter = true
+    profitBusyItem = nil
+    if refs.profitBtn then refs.profitBtn.text:SetText("全部") end
+    if RenderList then RenderList(true) end
+    if scroll then scroll:SetVerticalScroll(0) end
+    ns.UI.Notify(format("开始逐条查价 %d 条配方…", #list), 4)
+
+    local i = 0
+    local function step()
+        if run ~= profitRun then return end
+        i = i + 1
+        local rec = list[i]
+        if not rec then
+            local profitable, best = 0, nil
+            for _, r in ipairs(list) do
+                local p = profitCache[r.item]
+                if p and p > 0 then
+                    profitable = profitable + 1
+                    if not best or p > best.profit then
+                        best = { name = r.name, profit = p }
+                    end
+                end
+            end
+            st.at = (type(GetTime) == "function" and GetTime()) or 0
+            ns.Print(format("|cffe8c25a[赚金]|r 已查 %d 条, 盈利 %d 条", #list, profitable))
+            if profitable == 0 then
+                ns.UI.Notify("没有赚钱的配方 —— 再点一次「全部」恢复列表", 6)
+            elseif best then
+                ns.UI.Notify(format("盈利 %d 条 · 最赚: %s · %s",
+                    profitable, best.name, AH.MoneyEx(best.profit)), 8)
+            end
+            return
+        end
+
+        -- 当前这行: 查价按钮显示「查价中」并禁用 (重画时按 profitBusyItem 设置)
+        profitBusyItem = rec.item
+        if RenderList then RenderList(true) end
+
+        AH.CheckRecipe(rec, function(out)
+            if run ~= profitRun then return end
+            profitCache[rec.item] = out and out.profit
+            profitBusyItem = nil
+            -- 这一行查完立刻重画: 没利润的马上隐藏, 有利润的留着 (顺序不变)
+            if RenderList then RenderList(true) end
+            C_Timer.After(0.15, step)
+        end, nil, true)
+    end
+
+    step()
+end
+
 -- 总开关和全局间隔已经去掉: 打开自动购买列表页就按每一行自己的频率扫描。
 -- 这个入口保留成兼容函数 —— 老快捷键/老代码调到它时, 直接打开自动购买列表。
+-- 恢复完整配方列表 (赚金/全部 按钮的「全部」状态)
+function ns.UI.ShowAllRecipes()
+    profitRun = profitRun + 1
+    profitFilter = false
+    profitBusyItem = nil
+    local st = ProfitState(curKey)
+    st.filter = false
+    if refs.profitBtn then refs.profitBtn.text:SetText("赚金") end
+    if RenderList then RenderList() end
+end
+
+-- 赚金/全部: 已过滤时恢复全部, 否则开始查价
+function ns.UI.ToggleProfit()
+    if profitFilter then
+        ns.UI.ShowAllRecipes()
+    else
+        ns.UI.FindProfit()
+    end
+end
+
 function ns.UI.AutoBuyConfig()
     if ns.AutoBuyUI and ns.AutoBuyUI.Show then
         ns.AutoBuyUI.Show()

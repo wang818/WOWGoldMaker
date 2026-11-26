@@ -28,8 +28,8 @@ M.onlyMats = false
 
 --------------------------------------------------------------------------- 尺寸 (设计坐标 440x500, 运行时整体等比缩放)
 
-local BASE_W, BASE_H = 440, 500
-local PANEL_PCT       = 0.50   -- 窗口宽度的 50%
+local BASE_W, BASE_H = 520, 500
+local PANEL_PCT       = 0.55   -- 窗口宽度的 55% (多一列 AH 售价)
 local PANEL_MAX_H     = 0.86
 local CONTENT_PAD     = 24
 local SCALE_MAX       = 2.6
@@ -829,6 +829,65 @@ local function ItemTooltip(anchor, rec)
     GameTooltip:Show()
 end
 
+-- 行右侧价格: 默认 NPC 买价; 点了「查价」后显示拍卖行最低价, 按钮变「NPC」切回去
+-- 新加的一列: 查价后显示 AH 售价 (上) + 盈亏 (下); 未查价时留空, NPC 售价在左边那列
+local function ApplyAhPrice(r)
+    local rec = r.entry and r.entry.rec
+    if not rec then return end
+
+    if not r.ahUnit then
+        if r.ahPrice then r.ahPrice:SetText("") end
+        if r.profitText then r.profitText:SetText("") end
+        return
+    end
+
+    if r.ahPrice then
+        r.ahPrice:SetTextColor(T.rgb(C.teal))
+        r.ahPrice:SetText("AH " .. MoneyPlain(r.ahUnit))
+    end
+
+    if r.profitText then
+        local npcBuy = PriceOf(rec)
+        if npcBuy and npcBuy > 0 then
+            local profit = math.floor(r.ahUnit * 0.95) - npcBuy
+            if profit >= 0 then
+                r.profitText:SetTextColor(0.30, 0.80, 0.50)
+                r.profitText:SetText("盈 " .. MoneyPlain(profit))
+            else
+                r.profitText:SetTextColor(0.92, 0.42, 0.42)
+                r.profitText:SetText("亏 " .. MoneyPlain(-profit))
+            end
+        else
+            r.profitText:SetText("")
+        end
+    end
+end
+
+-- 行上的「查价」: 查拍卖行最低价, 在 NPC 售价下面显示盈亏 (不覆盖 NPC 售价)
+local function QuoteRow(r)
+    local rec = r.entry and r.entry.rec
+    if not rec then return end
+
+    local AH = ns.Auction
+    if not (AH and AH.CheckRecipe) then return end
+    local ok, why = AH.CanQuery()
+    if not ok then
+        ns.Print("|cffff9955查价失败|r " .. why)
+        return
+    end
+
+    r.quoteBtn:Disable()
+    r.quoteBtn.txt:SetText("查价中")
+    AH.CheckRecipe({ item = rec.id, mats = {}, made = 1 }, function(out)
+        if not r.entry or r.entry.rec.id ~= rec.id then return end
+        r.quoteBtn:Enable()
+        r.quoteBtn.txt:SetText("查价")
+        local pe = out and out.unit and out.unit[rec.id]
+        r.ahUnit = pe and pe.unit or nil
+        ApplyAhPrice(r)
+    end, nil, true)
+end
+
 local function NewItemRow()
     local r = CreateFrame("Button", nil, listContent)
     r:SetHeight(ITEM_H)
@@ -865,6 +924,41 @@ local function NewItemRow()
     r.price = Font(r, F_ITEM, C.gold)
     r.price:SetWidth(PRICE_W)
     r.price:SetJustifyH("RIGHT")
+
+    -- 新加的一列: AH 售价 (上) + 盈亏 (下); 未查价时留空, NPC 售价在左边那列
+    r.ahPrice = Font(r, F_ITEM, C.teal)
+    r.ahPrice:SetWidth(PRICE_W)
+    r.ahPrice:SetJustifyH("RIGHT")
+    r.ahPrice:SetPoint("RIGHT", r, "RIGHT", -48, 5)
+    r.ahPrice:SetText("")
+
+    r.profitText = Font(r, F_TIP, C.faint)
+    r.profitText:SetWidth(PRICE_W)
+    r.profitText:SetJustifyH("RIGHT")
+    r.profitText:SetPoint("RIGHT", r, "RIGHT", -48, -6)
+    r.profitText:SetText("")
+
+    -- 行右侧「查价」: 查拍卖行最低价, 再点切回 NPC 价
+    r.quoteBtn = CreateFrame("Button", nil, r)
+    r.quoteBtn:SetSize(40, 16)
+    r.quoteBtn:SetPoint("RIGHT", r, "RIGHT", -4, 0)
+    r.quoteBtn.bg = r.quoteBtn:CreateTexture(nil, "BACKGROUND")
+    r.quoteBtn.bg:SetAllPoints(true)
+    r.quoteBtn.bg:SetColorTexture(1, 1, 1, 0.10)
+    r.quoteBtn.txt = Font(r.quoteBtn, 9, C.muted)
+    r.quoteBtn.txt:SetPoint("CENTER", 0, 0)
+    r.quoteBtn.txt:SetText("查价")
+    r.quoteBtn:SetScript("OnEnter", function()
+        r.bg:SetColorTexture(1, 1, 1, 0.09)
+        r.quoteBtn.bg:SetColorTexture(1, 1, 1, 0.18)
+        r.quoteBtn.txt:SetTextColor(T.rgb(C.text))
+    end)
+    r.quoteBtn:SetScript("OnLeave", function()
+        r.bg:SetColorTexture(1, 1, 1, r.open and 0.05 or 0)
+        r.quoteBtn.bg:SetColorTexture(1, 1, 1, 0.10)
+        r.quoteBtn.txt:SetTextColor(T.rgb(C.muted))
+    end)
+    r.quoteBtn:SetScript("OnClick", function() QuoteRow(r) end)
 
     ------------------------------------------------------------------ 自动购买页的行内编辑器
     -- 自动页行高 AUTO_H = 两行:
@@ -1274,6 +1368,9 @@ end
 
 local function PaintItem(r, e, y, cw)
     local rec = e.rec
+    if r.entry and r.entry.rec.id ~= rec.id then
+        r.ahUnit = nil
+    end
     r.entry = e
     r.open = expanded[rec.id] and true or false
     PlaceRow(r, y, cw)
@@ -1302,6 +1399,9 @@ local function PaintItem(r, e, y, cw)
     if isAuto then
         r.cnt:Hide()
         r.price:Hide()
+        if r.quoteBtn then r.quoteBtn:Hide() end
+        if r.ahPrice then r.ahPrice:Hide() end
+        if r.profitText then r.profitText:Hide() end
         if r.delBtn then r.delBtn:Show() end
         if r.scanText then r.scanText:Show() end
         if r.lastPrice then r.lastPrice:Show() end
@@ -1340,18 +1440,23 @@ local function PaintItem(r, e, y, cw)
 
         r.cnt:Show()
         r.price:Show()
+        if r.quoteBtn then r.quoteBtn:Show() end
+        if r.ahPrice then r.ahPrice:Show() end
+        if r.profitText then r.profitText:Show() end
         r.price:ClearAllPoints()
-        r.price:SetPoint("RIGHT", r, "RIGHT", -8, 0)
+        r.price:SetPoint("RIGHT", r, "RIGHT", -150, 0)
         r.cnt:ClearAllPoints()
         r.cnt:SetPoint("RIGHT", r.price, "LEFT", -6, 0)
         r.cnt:SetText(format("%d 家", #rec.npcs))
+        r.price:SetTextColor(T.rgb(C.gold))
         local price = PriceOf(rec)
         r.price:SetText(price and PriceText(price) or "|cff8a929e无价|r")
+        ApplyAhPrice(r)
     end
 
     -- 45 = 星标 14 + 展开符 + 图标 + 间隙。
     -- 自动页第一行的结论列占 204px (价格/结果/累计), 其余给名字; 第二行的编辑控件不影响名字宽度
-    local titleW = isAuto and (cw - 45 - 204) or (cw - 45 - PRICE_W - CNT_W - 16)
+    local titleW = isAuto and (cw - 45 - 204) or (cw - 45 - PRICE_W * 2 - CNT_W - 22 - 44)
     if titleW < 80 then titleW = 80 end
     r.title:SetWidth(titleW)
 end
