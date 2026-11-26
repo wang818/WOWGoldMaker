@@ -40,6 +40,7 @@ local MAXLOG        = 40     -- 购买日志保留条数
 local scanning   = false
 local roundToken = 0
 local pending                -- 正在买: { id, qty, unit, name, token }
+local manualDone             -- 手动买入 (材料行「买入」) 的界面回调: (ok, err)
 local tokenSeq   = 0
 local ticker
 local lastScan   = 0
@@ -327,6 +328,11 @@ FinishPurchase = function(ok, reason)
     local rl, ri = resumeList, resumeIdx
     resumeList, resumeIdx = nil, nil
 
+    -- 手动买入的界面回调: 成交/失败都通知一次, 弹窗据此关闭或显示原因
+    local mc = manualDone
+    manualDone = nil
+    if mc then pcall(mc, ok == true, not ok and reason or nil) end
+
     if ok and rl then
         scanning = true
         roundToken = roundToken + 1
@@ -392,6 +398,10 @@ StartPurchase = function(id, qty, unit, name)
         if not pending or pending.token ~= token then return end
         pending = nil
         Notice("|cffff9955自动购买没有回音|r " .. (name or ("#" .. id)))
+        -- 手动买入也要收尾, 否则弹窗会一直停在「处理中」
+        local mc = manualDone
+        manualDone = nil
+        if mc then pcall(mc, false, "客户端没有回音") end
         if RoundDone then RoundDone() end
     end)
 
@@ -399,6 +409,100 @@ StartPurchase = function(id, qty, unit, name)
 end
 
 M.Buy = StartPurchase
+
+--------------------------------------------------------------------------- 手动买入
+
+-- 只查一次价, 不买: 材料行「买入」弹窗打开时用它显示当前最低价。
+-- force 默认 true —— 玩家要买的那一下必须看实时行情, 不能拿半小时前的缓存充数。
+function M.Quote(id, cb, force)
+    id = tonumber(id)
+    local AH = ns.Auction
+    if not (id and AH and AH.CheckRecipe) then
+        if cb then pcall(cb, nil, "拍卖行模块未加载") end
+        return false
+    end
+
+    AH.CheckRecipe({ item = id, mats = {}, made = 1 }, function(out)
+        local pe = out and out.unit and out.unit[id]
+        local unit = pe and pe.unit
+        if cb then
+            if unit and unit > 0 then
+                pcall(cb, unit, nil)
+            else
+                local w = out and out.why and out.why[1]
+                pcall(cb, nil, (w and w.reason) or "拍卖行没有挂单")
+            end
+        end
+    end, nil, force ~= false)
+    return true
+end
+
+-- 手动买一次 (材料行「买入」): 查最低价 → 价格闸 → 数量/背包/金币核算 → 下单。
+-- 价格闸和自动购买一致: 列表里设了单价上限就按上限卡, 没设就按市价买。
+-- isAlive 可选: 查价回包时再问一次「弹窗还开着吗」, 玩家中途关掉就不要下单了。
+-- 返回 false 表示连查询都没发出去; 真正的成交结果走 onDone(ok, err)。
+function M.BuyNow(id, qty, name, onDone, isAlive)
+    id, qty = tonumber(id), tonumber(qty)
+    if not id or not qty or qty < 1 then
+        return false, "数量要大于 0"
+    end
+    if pending then
+        return false, "上一笔还在处理"
+    end
+
+    local AH = ns.Auction
+    if not (AH and AH.CheckRecipe and AH.CanQuery) then
+        return false, "拍卖行模块未加载"
+    end
+    local canQuery, why = AH.CanQuery()
+    if not canQuery then return false, why end
+
+    qty = math.floor(qty)
+    if qty > MAX_ORDER then qty = MAX_ORDER end      -- 单笔上限, 和自动购买同一个数
+
+    -- 不用 force: 弹窗打开时刚查过一次, 缓存就是最新的; 没查到的话这里会入队等回包
+    AH.CheckRecipe({ item = id, mats = {}, made = 1 }, function(out)
+        -- 查价期间弹窗被关掉/换成了别的物品: 取消, 别在玩家看不见的地方花钱
+        if isAlive and not isAlive() then
+            if onDone then pcall(onDone, false, "已取消") end
+            return
+        end
+
+        local pe = out and out.unit and out.unit[id]
+        local unit = pe and pe.unit
+        if not unit or unit <= 0 then
+            if onDone then pcall(onDone, false, "拍卖行没有挂单") end
+            return
+        end
+
+        local limit = M.PriceOf(id)
+        if limit and unit > limit then
+            if onDone then
+                pcall(onDone, false, format("最低价 %s 高于你设的上限 %s",
+                    MoneyText(unit), MoneyText(limit)))
+            end
+            return
+        end
+
+        local room, why2 = BuyQty(id, unit)
+        if room < 1 then
+            if onDone then
+                pcall(onDone, false, why2 == "bag" and "背包没有空格" or "金币不足")
+            end
+            return
+        end
+        if qty > room then qty = room end
+
+        -- 回调先挂上再下单: 失败路径要立刻清掉, 成功路径交给 FinishPurchase
+        manualDone = onDone
+        local ok, err = StartPurchase(id, qty, unit, name or NameText(id))
+        if not ok then
+            manualDone = nil
+            if onDone then pcall(onDone, false, err) end
+        end
+    end, nil, false)
+    return true
+end
 
 function M.Pending()
     return pending

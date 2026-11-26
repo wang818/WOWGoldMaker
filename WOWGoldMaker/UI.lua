@@ -40,7 +40,8 @@ local MAT_LINE_H  = 13   -- 材料行高 (一样材料一行)
 local MAT_INDENT  = 22   -- 材料行左缩进 = 商品图标列宽
 local MAT_ICON    = 9    -- 材料行图标尺寸
 local MAT_PRICE_W = 84   -- 材料行右侧金额宽度
-local MAT_RIGHT   = 48   -- 材料行右边界: 让金额右缘与商品行的「盈亏」列对齐 (按钮 40 + 间距 8)
+local MAT_RIGHT   = 54   -- 材料行右边界: 给「买入 / 自动」两个小按钮 (22 + 2 + 22 + 边距) 留位,
+                         -- 金额右缘基本仍和商品行的「盈亏」列对齐
 -- NPC 价格列 (材料行, 夹在材料名与金额之间)
 --   卖价 = 客户端自带的「卖给商人」单价, 只读
 --   买价 = 玩家自己录入的「从商人买」单价, 可点开编辑
@@ -1300,7 +1301,7 @@ local function MakeCell(r, k)
 
     -- 自动购买入口: 落在行右缘那段留白里 (MAT_RIGHT 是给商品行按钮列对齐留的),
     -- 和上一行商品行的「查价」按钮同一竖列, 视觉上是一列操作, 不会显得乱
-    c.autoBtn = MakeMiniButton(c, 26, 12, "自动")
+    c.autoBtn = MakeMiniButton(c, 22, 12, "自动")
     c.autoBtn:SetPoint("RIGHT", c, "RIGHT", -4, 0)
     c.autoBtn:SetScript("OnClick", function()
         if not c.itemID then return end
@@ -1317,6 +1318,25 @@ local function MakeCell(r, k)
         local on = ns.AutoBuy and ns.AutoBuy.Get(c.itemID)
         c.autoBtn.bg:SetVertexColor(1, 0.82, 0.35, on and 0.22 or 0.10)
         c.autoBtn.text:SetTextColor(T.rgb(on and C.gold or C.muted))
+        c.hoverOff(s)
+    end)
+
+    -- 手动买入: 输个数量, 按当前最低价买一次。放在「自动」左边 —— 两个都是拍卖行操作,
+    -- 排成一对; 自动管长期盯价, 买入手动补一次货。
+    c.buyNowBtn = MakeMiniButton(c, 22, 12, "买入")
+    c.buyNowBtn:SetPoint("RIGHT", c.autoBtn, "LEFT", -2, 0)
+    c.buyNowBtn:SetScript("OnClick", function()
+        ns.UI.BuyItem(c.itemID, c.itemID and PlainText(c.name:GetText()) or nil)
+    end)
+    -- 和「自动」一样接管整行高亮: 子按钮接到鼠标后行本身的 OnEnter 不触发
+    c.buyNowBtn:SetScript("OnEnter", function(s)
+        c.buyNowBtn.bg:SetVertexColor(1, 1, 1, 0.17)
+        c.buyNowBtn.text:SetTextColor(T.rgb(C.text))
+        c.hoverOn(s)
+    end)
+    c.buyNowBtn:SetScript("OnLeave", function(s)
+        c.buyNowBtn.bg:SetVertexColor(1, 1, 1, 0.10)
+        c.buyNowBtn.text:SetTextColor(T.rgb(C.muted))
         c.hoverOff(s)
     end)
 
@@ -2721,6 +2741,9 @@ local function BuildAutoEditor()
     -- 主面板可能还没建 (从商人货架直接点进来), 取不到层级就用个固定基数
     local baseLevel = (frame and frame.GetFrameLevel) and frame:GetFrameLevel() or 200
     f:SetFrameLevel(baseLevel + 20)
+    -- 主面板是 Toplevel 的 (见 ns.UI.ApplyStrata), 同层里它会盖住所有普通浮窗 ——
+    -- 浮窗也得是 Toplevel, 再靠上面高 20 的 level 排在它前面
+    f:SetToplevel(true)
     f:SetClampedToScreen(true)
     f:EnableMouse(true)
     f:SetMovable(true)
@@ -2973,6 +2996,228 @@ function ns.UI.EditAutoBuy(itemID, name, cell)
     if box.HighlightText then box:HighlightText() end
 end
 
+--------------------------------------------------------------------------- 手动买入 (材料行「买入」)
+
+-- 「自动」左边的「买入」按钮: 输个数量, 回车/点买入 → 按当前最低价买一次。
+-- 价格闸沿用自动购买的那一套: 列表里设了单价上限就按上限卡, 没设就按市价。
+-- 挂在 UIParent 上, 理由和改价浮窗一样 —— 主面板收起时浮窗不该跟着消失。
+local buyEditor
+
+local function BuildBuyEditor()
+    if buyEditor then return buyEditor end
+    if not UIParent then return nil end
+
+    local W, H = 300, 132
+    local f = T.Glass(UIParent, W, H, "panel")
+    f:SetFrameStrata(ns.DB().strata or "DIALOG")
+    local baseLevel = (frame and frame.GetFrameLevel) and frame:GetFrameLevel() or 200
+    f:SetFrameLevel(baseLevel + 20)
+    -- 主面板是 Toplevel 的 (见 ns.UI.ApplyStrata), 同层里它会盖住所有普通浮窗 ——
+    -- 浮窗也得是 Toplevel, 再靠上面高 20 的 level 排在它前面
+    f:SetToplevel(true)
+    f:SetClampedToScreen(true)
+    f:EnableMouse(true)
+    f:SetMovable(true)
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", function(s) s:StartMoving() end)
+    f:SetScript("OnDragStop", function(s) s:StopMovingOrSizing() end)
+
+    local title = T.Text(f, 11, C.gold)
+    title:SetPoint("TOPLEFT", 14, -12)
+    title:SetText("买入")
+
+    local who = T.Text(f, 9, C.muted)
+    who:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -5)
+    who:SetWidth(W - 28)
+    who:SetWordWrap(false)
+
+    local qlabel = T.Text(f, 9, C.faint)
+    qlabel:SetPoint("TOPLEFT", who, "BOTTOMLEFT", 0, -12)
+    qlabel:SetText("数量")
+
+    local cell = T.Line(f, 70, 20, C.white, 0.06)
+    cell:SetPoint("LEFT", qlabel, "RIGHT", 8, 0)
+
+    local box = CreateFrame("EditBox", nil, f)
+    box:SetSize(60, 16)
+    box:SetPoint("LEFT", cell, "LEFT", 5, 0)
+    box:SetFont(T.FontFile(), 11, "")
+    box:SetTextColor(T.rgb(C.text))
+    box:SetAutoFocus(false)
+    box:SetNumeric(true)
+    box:SetMaxLetters(6)
+    box:SetTextInsets(1, 1, 0, 0)
+
+    local unitLabel = T.Text(f, 9, C.faint)
+    unitLabel:SetPoint("LEFT", cell, "RIGHT", 4, 0)
+    unitLabel:SetText("个")
+
+    -- 一行行情: 最低价 / 合计 / 上限。查价是异步的, 先写「查价中…」
+    local hint = T.Text(f, 8, C.faint)
+    hint:SetPoint("TOPLEFT", cell, "BOTTOMLEFT", 0, -8)
+    hint:SetWidth(W - 28)
+    hint:SetWordWrap(false)
+
+    local function Qty()
+        local n = tonumber(box:GetText() or "") or 0
+        return math.floor(n)
+    end
+
+    local function RefreshHint()
+        local limit = f.itemID and ns.AutoBuy and ns.AutoBuy.PriceOf(f.itemID)
+        local order = (ns.AutoBuy and ns.AutoBuy.Order and ns.AutoBuy.Order()) or 200
+
+        if not f.quote then
+            hint:SetTextColor(T.rgb(C.faint))
+            hint:SetText(f.quoteErr or "查价中…")
+            return
+        end
+
+        local n = Qty()
+        if n < 1 then
+            hint:SetTextColor(T.rgb(C.faint))
+            hint:SetText(format("最低价 %s/个 · 单笔最多 %d 个", ns.NPC.MoneyEx(f.quote), order))
+            return
+        end
+        if limit and f.quote > limit then
+            hint:SetTextColor(T.rgb(C.red))
+            hint:SetText(format("最低价 %s/个, 高于你设的上限 %s —— 不会买",
+                ns.NPC.MoneyEx(f.quote), ns.NPC.MoneyEx(limit)))
+            return
+        end
+
+        -- 和 AutoBuy.BuyNow 同一套核算: 背包放不下 / 钱不够时, 这里先如实写出来
+        local room = (ns.AutoBuy and ns.AutoBuy.BuyQty)
+            and ns.AutoBuy.BuyQty(f.itemID, f.quote) or order
+        if room < 1 then
+            hint:SetTextColor(T.rgb(C.red))
+            hint:SetText("背包没有空格或金币不足 —— 现在买不了")
+            return
+        end
+
+        local buyN = math.min(n, room)
+        hint:SetTextColor(T.rgb(C.gold))
+        hint:SetText(format("买 %d 个 · 最低价 %s/个 · 共 %s%s",
+            buyN,
+            ns.NPC.MoneyEx(f.quote),
+            ns.NPC.MoneyEx(f.quote * buyN),
+            limit and (" · 上限 " .. ns.NPC.MoneyEx(limit)) or ""))
+    end
+
+    local function DoBuy()
+        local id = f.itemID
+        if not id or f.busy then return end
+
+        local n = Qty()
+        if n < 1 then
+            hint:SetTextColor(T.rgb(C.red))
+            hint:SetText("数量要大于 0")
+            box:SetFocus()
+            return
+        end
+        if not (ns.AutoBuy and ns.AutoBuy.BuyNow) then
+            hint:SetTextColor(T.rgb(C.red))
+            hint:SetText("自动购买模块未加载")
+            return
+        end
+
+        f.busy = true
+        hint:SetTextColor(T.rgb(C.faint))
+        hint:SetText(format("买入 %d 个…", n))
+
+        -- 记下这次打开弹窗的编号: 关掉再打开同一件物品时, 上一次还在飞的查价必须作废
+        local req = f.req
+        local ok, why = ns.AutoBuy.BuyNow(id, n, f.label, function(ok2, err)
+            if f.req ~= req then return end      -- 弹窗已经关掉/重开, 这条结果不再属于它
+            f.busy = false
+            if ok2 then
+                f:Hide()
+                return
+            end
+            hint:SetTextColor(T.rgb(C.red))
+            hint:SetText(err or "买入失败")
+        end, function()
+            -- 查价还没回来时把弹窗关掉 / 换成别的物品 / 重新打开 = 取消这一单
+            return f.req == req and f:IsShown() and f.itemID == id
+        end)
+        if not ok then
+            f.busy = false
+            hint:SetTextColor(T.rgb(C.red))
+            hint:SetText(why or "买入失败")
+        end
+    end
+
+    box:SetScript("OnTextChanged", RefreshHint)
+    box:SetScript("OnEscapePressed", function(b) b:ClearFocus(); f:Hide() end)
+    box:SetScript("OnEnterPressed", DoBuy)
+
+    local buy = MakeMiniButton(f, 54, 18, "买入")
+    buy:SetPoint("BOTTOMRIGHT", -14, 12)
+    buy:SetScript("OnClick", DoBuy)
+
+    local cancel = MakeMiniButton(f, 54, 18, "取消")
+    cancel:SetPoint("RIGHT", buy, "LEFT", -6, 0)
+    cancel:SetScript("OnClick", function() f:Hide() end)
+
+    f.box, f.who, f.hint = box, who, hint
+    f.refreshHint, f.doBuy = RefreshHint, DoBuy
+    f:Hide()
+    buyEditor = f
+    return buyEditor
+end
+
+function ns.UI.BuyItem(itemID, name)
+    if type(itemID) ~= "number" or itemID <= 0 then
+        ns.UI.Notify("这一行还没有解析到物品, 稍等一下再点", 3)
+        return
+    end
+    if not (ns.AutoBuy and ns.AutoBuy.Quote and ns.AutoBuy.BuyNow) then
+        ns.UI.Notify("自动购买模块未加载", 3)
+        return
+    end
+    local AH = ns.Auction
+    if AH and AH.CanQuery then
+        local ok, why = AH.CanQuery()
+        if not ok then
+            ns.UI.Notify(why .. " —— 先打开拍卖行", 4)
+            return
+        end
+    end
+
+    local f = BuildBuyEditor()
+    if not f then return end
+
+    f.itemID = itemID
+    f.label = name or ("物品 #" .. tostring(itemID))
+    f.busy = false
+    f.quote = nil
+    f.quoteErr = "查价中…"
+    -- 每次打开算新的一轮: 上一轮还没回包的查价/下单请求据此作废
+    f.req = (f.req or 0) + 1
+
+    local limit = ns.AutoBuy.PriceOf(itemID)
+    f.who:SetText(f.label .. (limit and ("  |cff4dc87a· 上限 " .. ns.NPC.MoneyEx(limit) .. "/个|r") or ""))
+    f.box:SetText("1")
+    f.hint:SetTextColor(T.rgb(C.faint))
+    f.hint:SetText("查价中…")
+
+    f:ClearAllPoints()
+    f:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    f:Show()
+    f.box:SetFocus()
+    if f.box.HighlightText then f.box:HighlightText() end
+
+    -- 每次打开重查一次; token 防止连点两件物品时, 前一次的慢回包盖掉后一次的结果
+    local token = (f.token or 0) + 1
+    f.token = token
+    ns.AutoBuy.Quote(itemID, function(unit, err)
+        if f.token ~= token or f.itemID ~= itemID then return end
+        f.quote = unit
+        f.quoteErr = err and ("查不到行情: " .. tostring(err)) or "查不到行情"
+        f.refreshHint()
+    end, true)
+end
+
 --------------------------------------------------------------------------- 自动购买总开关
 
 -- 开关 + 扫描间隔在这里改 (单价上限在材料行的「自动」按钮里), 免得玩家改存档文件
@@ -2989,6 +3234,9 @@ local function BuildAutoCfg()
     -- 主面板可能还没建 (从商人货架直接点进来), 取不到层级就用个固定基数
     local baseLevel = (frame and frame.GetFrameLevel) and frame:GetFrameLevel() or 200
     f:SetFrameLevel(baseLevel + 20)
+    -- 主面板是 Toplevel 的 (见 ns.UI.ApplyStrata), 同层里它会盖住所有普通浮窗 ——
+    -- 浮窗也得是 Toplevel, 再靠上面高 20 的 level 排在它前面
+    f:SetToplevel(true)
     f:SetClampedToScreen(true)
     f:EnableMouse(true)
     f:SetMovable(true)
