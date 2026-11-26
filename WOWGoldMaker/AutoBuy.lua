@@ -1,13 +1,12 @@
 ---------------------------------------------------------------------------
 -- WOWGoldMaker / AutoBuy.lua
--- 自动购买: 给一样材料设「单价上限」, 拍卖行开着时按设定的间隔扫一轮 (默认 60 秒,
--- 可改成 1 秒 ~ 任意长), 只要最低单价不高于上限就买 —— 不设目标数量, 有货就吃。
+-- 自动购买: 给一样材料设「单价上限」和「扫描频率」, 打开自动购买列表页后按频率扫,
+-- 关掉页面立即停。默认频率 1 秒 —— 页面开着时每秒 tick 一次, 只把到了自己频率的
+-- 条目拎出来查价, 所以每个商品可以设不同的间隔。
 --
 -- **这是真花钱的功能**, 所以留了这几道闸:
---   1) 总开关 db.autoBuyOn —— 默认关闭, 必须手动开, 关窗口/重登都保持关闭状态
+--   1) 只有自动购买列表页开着才扫 (页面关闭/切走 = 停)
 --   2) 每件的单价上限 —— 高于它这一轮就跳过, 这是唯一的价格闸门
--- 没有「单轮总花费上限」了: 设了单价就要买到, 不想花钱就关总开关或把物品移出列表。
---
 -- 每次真下单前还会再核一次: 拍卖行窗口必须开着、金币必须够、单价必须不高于上限、
 -- 背包得有地方放。
 --
@@ -43,10 +42,26 @@ local pending                -- 正在买: { id, qty, unit, name, token }
 local manualDone             -- 手动买入 (材料行「买入」) 的界面回调: (ok, err)
 local tokenSeq   = 0
 local ticker
+local pageActive = false     -- 自动购买页是否开着 (开着才扫)
+local buying     = false     -- 买入弹窗开着: 暂停扫描, 免得查询结果把购买上下文冲掉
 local lastScan   = 0
 local lastNotice = -100
 local bought     = {}        -- 本次会话已下单但客户端还没算进背包的数量: itemID -> n
 local buyLog     = {}
+local scans      = {}        -- 本次会话每个条目的扫描次数: itemID -> n (不写存档)
+local lastAt     = {}        -- 上一次扫描的时间: itemID -> GetTime()
+local lastInfo   = {}        -- 最近一次扫描结论: itemID -> { unit = 价格, tag = 结果 }
+
+-- 购买链路诊断: 客户端不保证有 COMMODITY_PURCHASE_* 事件, 没有时只能靠背包变化判断。
+-- 这些数据由 /wgm 自动 诊断 打印出来。
+local diag = {
+    events = {},             -- 事件名 -> 收到次数
+    lastEvent = nil,
+    lastStart = nil,
+    lastConfirm = nil,
+    lastTimeout = nil,
+    lastFail = nil,          -- { at, id, reason } 最近一次没买成的原因
+}
 
 -- 本轮买到一半时被 pending 打断, 记下「接着从哪继续」
 local resumeList, resumeIdx
@@ -57,65 +72,174 @@ NowT = function()
     return (type(GetTime) == "function" and GetTime()) or 0
 end
 
+-- 记下最近一次没买成的原因 (诊断用)
+local function NoteFail(id, reason)
+    diag.lastFail = { at = NowT(), id = tonumber(id) or 0, reason = tostring(reason) }
+end
+
 --------------------------------------------------------------------------- 存档
 
 local function DB()
     return ns.DB() or {}
 end
 
--- 自动购买表。缺字段时补成空表, 免得存档是从旧版本升上来的直接 nil 报错
+-- 自动购买表。缺字段时补成空表, 免得存档是从旧版本升上来的直接 nil 报错。
+-- 存档里的键有时会被序列化成字符串 ("12345"): 统一迁回数字键。
+-- 不迁的话 M.List 排序会拿字符串和数字比较、整张表直接报错, 界面就只剩/丢掉条目。
 local function Cfg()
     local d = DB()
     if type(d.autoBuy) ~= "table" then d.autoBuy = {} end
-    return d.autoBuy
+
+    local t = d.autoBuy
+    local needFix = false
+    for k in pairs(t) do
+        if type(k) ~= "number" then needFix = true; break end
+    end
+    if needFix then
+        local fixed = {}
+        for k, v in pairs(t) do
+            local n = tonumber(k)
+            if n then fixed[n] = v end
+        end
+        d.autoBuy = fixed
+        return fixed
+    end
+    return t
 end
 
-function M.Enabled()
-    return DB().autoBuyOn == true
+-- 购买总数存存档 (跨重载累计): itemID -> 已买数量。
+-- 每一条有自己的上限 (默认 100), 买够就跳过。
+-- 注意: 必须定义在 DB()/Cfg() 之后 —— Lua 5.1 是词法作用域, 提前引用 DB 会拿到全局 nil。
+local function Bought()
+    local d = DB()
+    if type(d.autoBuyBought) ~= "table" then d.autoBuyBought = {} end
+    return d.autoBuyBought
 end
 
-function M.SetEnabled(on)
-    DB().autoBuyOn = on and true or false
-    if on then M.Start() else M.Stop() end
-    return DB().autoBuyOn
+-- 扫描频率 (秒): 每个条目单独设, 默认 1 秒 (每秒都扫), 上限 1 小时。
+local GAP_MIN, GAP_MAX, GAP_DEFAULT = 1, 3600, 1
+
+-- 购买总数上限: 每条单独设, 默认 100 个; 买到这个数就不再扫这一条。
+local QTY_MIN, QTY_MAX, QTY_DEFAULT = 1, 999999, 100
+
+-- 这一次会话里每条扫了几次 / 上次扫描时间。不写存档 —— 重载后从 0 重新数。
+function M.Scans(id)
+    return scans[tonumber(id) or 0] or 0
 end
 
--- 扫描间隔 (秒)。最小 1 秒, 上限不设 —— 有人想 5 秒盯一次, 也有人想 10 分钟看一次,
--- 都按填的来。防呆分两种: 不是数字 (清空/乱填) 退回默认 60; 是数字但小于 1
--- (0 / 负数) 抬到 1 —— 玩家写 0 的意思是「尽快」, 不是「关掉」。
-local GAP_MIN, GAP_DEFAULT = 1, 60
+-- 最近一次扫描的结论: { unit = 查到的最低价 (铜, 可能 nil), tag = none/over/bag/money/fail/pending/bought }
+function M.Info(id)
+    return lastInfo[tonumber(id) or 0]
+end
 
-function M.Gap()
-    local v = tonumber(DB().autoBuyGap)
-    if not v or v ~= v then return GAP_DEFAULT end
+-- 这一条累计买了多少个 (跨重载, 存 db.autoBuyBought)
+function M.BoughtQty(id)
+    return tonumber(Bought()[tonumber(id) or 0]) or 0
+end
+
+-- 扫描结论变了就刷一下自动购买窗口对应行 (价格 / 结果 / 累计买到)
+local function RefreshInfo(id)
+    if ns.AutoBuyUI and ns.AutoBuyUI.RefreshRow then
+        pcall(ns.AutoBuyUI.RefreshRow, id)
+    elseif ns.MerchantUI and ns.MerchantUI.RefreshScan then
+        pcall(ns.MerchantUI.RefreshScan, id)
+    end
+end
+
+-- 这一条的扫描频率 (秒)。旧存档没有 gap 字段 -> 默认 1 秒。
+function M.GapOf(id)
+    id = tonumber(id)
+    local e = id and Cfg()[id]
+    local v = tonumber(e and e.gap) or GAP_DEFAULT
     v = math.floor(v)
     if v < GAP_MIN then v = GAP_MIN end
+    if v > GAP_MAX then v = GAP_MAX end
     return v
 end
 
--- 改间隔。计时器是按旧间隔在跑的, 不重建就要等下一次才生效 ——
--- 玩家改完盯着屏幕看不到变化, 会以为没保存。
-function M.SetGap(sec)
+-- 改这一条的频率。返回实际生效的值; 条目不在列表里就返回 nil。
+function M.SetGap(id, sec)
+    id = tonumber(id)
+    local e = id and Cfg()[id]
+    if not e then return nil end
     local v = tonumber(sec)
-    if not v or v ~= v then
-        v = GAP_DEFAULT                      -- 清空 / 非数字: 回默认
-    else
-        v = math.floor(v)
-        if v < GAP_MIN then v = GAP_MIN end  -- 0 / 负数: 1 秒 (最快)
-    end
-
-    DB().autoBuyGap = v
-
-    if ticker then
-        pcall(function() ticker:Cancel() end)
-        ticker = nil
-        if M.Enabled() then
-            -- 直接重建, 不走 Start(): Start 里那个「启动时先扫一轮」的 2 秒预热
-            -- 在这里只会多打一轮查询
-            ticker = C_Timer.NewTicker(v, function() M.Scan() end)
-        end
-    end
+    if not v or v ~= v then v = GAP_DEFAULT end
+    v = math.floor(v)
+    if v < GAP_MIN then v = GAP_MIN end
+    if v > GAP_MAX then v = GAP_MAX end
+    e.gap = v
     return v
+end
+
+-- 这一条最多买多少个 (默认 100, 跨重载累计)
+function M.QtyOf(id)
+    id = tonumber(id)
+    local e = id and Cfg()[id]
+    local v = tonumber(e and e.q) or QTY_DEFAULT
+    v = math.floor(v)
+    if v < QTY_MIN then v = QTY_MIN end
+    if v > QTY_MAX then v = QTY_MAX end
+    return v
+end
+
+-- 改这一条的购买总数上限。返回实际生效的值; 条目不在列表里就返回 nil。
+function M.SetQty(id, n)
+    id = tonumber(id)
+    local e = id and Cfg()[id]
+    if not e then return nil end
+    local v = tonumber(n)
+    if not v or v ~= v then v = QTY_DEFAULT end
+    v = math.floor(v)
+    if v < QTY_MIN then v = QTY_MIN end
+    if v > QTY_MAX then v = QTY_MAX end
+    e.q = v
+    return v
+end
+
+-- 这一条是否参与扫描 (默认开; 暂停后行上显示「扫描」)
+function M.ScanOn(id)
+    id = tonumber(id)
+    local e = id and Cfg()[id]
+    if not e then return false end
+    return e.on ~= false
+end
+
+function M.SetScanOn(id, on)
+    id = tonumber(id)
+    local e = id and Cfg()[id]
+    if not e then return nil end
+    e.on = on and true or false
+    return e.on
+end
+
+-- 行内金额输入框的解析。接受三种写法:
+--   1金20银5铜 / 20银 / 5铜  -> 按单位精确换算
+--   1.5                      -> 小数按「金」(1.5 金 = 1金50银)
+--   15000                    -> 纯整数按「铜」(内部单位, 也不容易把上限误设成天价)
+-- 解析不出来返回 nil。
+function M.ParseMoney(s)
+    s = tostring(s or ""):gsub("%s", "")
+    if s == "" then return nil end
+
+    local g = s:match("(%d+)金")
+    local si = s:match("(%d+)银")
+    local c = s:match("(%d+)铜")
+    if g or si or c then
+        local v = (tonumber(g) or 0) * 10000 + (tonumber(si) or 0) * 100 + (tonumber(c) or 0)
+        return v > 0 and v or nil
+    end
+
+    local plain = s:match("^%d+%.?%d*$")
+    if plain then
+        local v = tonumber(plain)
+        if plain:find("%.", 1, true) then
+            v = math.floor(v * 10000 + 0.5)
+        else
+            v = math.floor(v)
+        end
+        return v > 0 and v or nil
+    end
+    return nil
 end
 
 --------------------------------------------------------------------------- 列表
@@ -137,11 +261,17 @@ function M.PriceOf(id)
 end
 
 -- 加进自动购买列表 (已在列表里就是改价)。旧存档里的 q 字段直接忽略,
--- 下次 Set 时会被覆盖掉, 不用专门写迁移。
+-- 下次 Set 时会被覆盖掉, 不用专门写迁移。改成时不丢这一条自己的扫描频率。
 function M.Set(id, price)
     id, price = tonumber(id), tonumber(price)
     if not id or not price or price <= 0 then return nil end
-    Cfg()[id] = { p = math.floor(price) }
+    local old = Cfg()[id]
+    Cfg()[id] = {
+        p = math.floor(price),
+        gap = (old and tonumber(old.gap)) or GAP_DEFAULT,
+        q = (old and tonumber(old.q)) or QTY_DEFAULT,
+        on = old and old.on,      -- nil = 扫描开着; false = 玩家暂停了这一条
+    }
     return Cfg()[id]
 end
 
@@ -149,6 +279,11 @@ function M.Remove(id)
     id = tonumber(id)
     if not id then return false end
     Cfg()[id] = nil
+    -- 连同这一条的扫描状态一起清掉: 以后再加回来时从干净的 0 开始
+    lastInfo[id] = nil
+    lastAt[id] = nil
+    scans[id] = nil
+    Bought()[id] = nil
     return true
 end
 
@@ -162,9 +297,17 @@ end
 function M.List()
     local out = {}
     for id, e in pairs(Cfg()) do
-        out[#out + 1] = { id = id, p = e.p or 0 }
+        out[#out + 1] = {
+            id = tonumber(id) or id, p = e.p or 0,
+            gap = tonumber(e.gap) or GAP_DEFAULT,
+            q = tonumber(e.q) or QTY_DEFAULT,
+        }
     end
-    table.sort(out, function(a, b) return a.id < b.id end)
+    table.sort(out, function(a, b)
+        local na, nb = tonumber(a.id), tonumber(b.id)
+        if na and nb then return na < nb end
+        return tostring(a.id) < tostring(b.id)
+    end)
     return out
 end
 
@@ -204,7 +347,8 @@ local function Money()
         local ok, v = pcall(GetMoney)
         if ok and type(v) == "number" then return v end
     end
-    return 0
+    -- 拿不到金币数就不拦 (无穷大): 以前返回 0, 会把每一单都误判成「金币不足」
+    return math.huge
 end
 
 -- 这件东西在客户端物品库里的堆叠数。拿不到就按 20 (最保守的堆叠) 估。
@@ -316,6 +460,11 @@ FinishPurchase = function(ok, reason)
         -- 增量会和客户端后来自己入包的数量重复计算
         bought[p.id] = { n = Have(p.id) + p.qty, at = NowT() }
         LogBuy(p.id, p.qty, p.unit)
+        local b = Bought()
+        b[p.id] = (b[p.id] or 0) + p.qty
+        local info = lastInfo[p.id]
+        if info then info.tag = "bought" end
+        RefreshInfo(p.id)
         Notice(format("|cff4dc87a自动买入|r %s ×%d (单价 %s · 共 %s)",
             p.name or ("#" .. p.id), p.qty, MoneyText(p.unit), MoneyText(p.unit * p.qty)))
     else
@@ -349,29 +498,56 @@ end
 
 M.FinishPurchase = FinishPurchase
 
+-- 事件丢了时用背包数量判断货有没有真的进包 (下单前记了 before)。
+-- 只有单笔 pending 时才会用到, 其他来源同时改这个物品数量的概率很低。
+local function Delivered(p)
+    if not (p and p.before and type(GetItemCount) == "function") then return false end
+    local ok, n = pcall(GetItemCount, p.id)
+    return ok and type(n) == "number" and n > p.before
+end
+
 StartPurchase = function(id, qty, unit, name)
     if pending then return false, "上一笔还在处理" end
     if qty < 1 then return false, "数量为 0" end
 
     local cost = unit * qty
-    if Money() < cost then return false, "金币不足" end
+    if Money() < cost then
+        NoteFail(id, "金币不足")
+        return false, "金币不足"
+    end
 
     local api = _G.C_AuctionHouse
     if not (api and type(api.StartCommoditiesPurchase) == "function") then
+        NoteFail(id, "客户端没有购买接口")
         return false, "客户端没有购买接口"
     end
 
     -- 下单前再确认一次窗口还开着: 扫描期间玩家可能已经把拍卖行关了
     if ns.Auction and ns.Auction.CanQuery then
         local ok, why = ns.Auction.CanQuery()
-        if not ok then return false, why end
+        if not ok then
+            NoteFail(id, why)
+            return false, why
+        end
     end
 
     tokenSeq = tokenSeq + 1
     local token = tokenSeq
-    pending = { id = id, qty = qty, unit = unit, name = name, token = token, at = NowT() }
+
+    -- 下单前背包里有多少个: 事件丢了时用它判断货到底有没有进包
+    local before
+    if type(GetItemCount) == "function" then
+        local okN, n = pcall(GetItemCount, id)
+        if okN and type(n) == "number" then before = n end
+    end
+
+    pending = {
+        id = id, qty = qty, unit = unit, name = name,
+        token = token, at = NowT(), before = before,
+    }
 
     local ok, err = pcall(api.StartCommoditiesPurchase, id, qty)
+    diag.lastStart = { at = NowT(), id = id, qty = qty, ok = ok, ret = tostring(err) }
     if not ok then
         pending = nil
         local msg = tostring(err)
@@ -379,6 +555,7 @@ StartPurchase = function(id, qty, unit, name)
         if low:find("restrict", 1, true) or low:find("protect", 1, true) then
             msg = "客户端禁止插件自动购买"
         end
+        NoteFail(id, msg)
         return false, msg
     end
 
@@ -389,15 +566,36 @@ StartPurchase = function(id, qty, unit, name)
         if not pending or pending.token ~= token then return end
         local c = _G.C_AuctionHouse
         if c and type(c.ConfirmCommoditiesPurchase) == "function" then
-            pcall(c.ConfirmCommoditiesPurchase, id, qty)
+            local okC, retC = pcall(c.ConfirmCommoditiesPurchase, id, qty)
+            diag.lastConfirm = { at = NowT(), id = id, qty = qty, ok = okC, ret = tostring(retC) }
         end
     end)
+
+    -- 没有购买事件的客户端: 靠背包数量变化尽早判定成交 (不用干等 10 秒超时)
+    local function poll()
+        if pending and pending.token == token and Delivered(pending) then
+            FinishPurchase(true)
+        end
+    end
+    C_Timer.After(1.5, poll)
+    C_Timer.After(4, poll)
 
     -- 兜底: 事件被吞掉 (静默失败) 也要把 pending 放掉
     C_Timer.After(BUY_TIMEOUT, function()
         if not pending or pending.token ~= token then return end
+
+        -- 事件没来, 但货可能已经进背包: 数量增加就当成功, 别误报「没有回音」
+        if Delivered(pending) then
+            FinishPurchase(true)
+            return
+        end
+
         pending = nil
+        diag.lastTimeout = { at = NowT(), id = id, qty = qty }
         Notice("|cffff9955自动购买没有回音|r " .. (name or ("#" .. id)))
+        local info = lastInfo[id]
+        if info then info.tag = "fail" end
+        RefreshInfo(id)
         -- 手动买入也要收尾, 否则弹窗会一直停在「处理中」
         local mc = manualDone
         manualDone = nil
@@ -528,58 +726,183 @@ RoundStep = function(list, i)
         RoundStep(list, i + 1)
     end
 
+    -- 页面已经关掉: 正在飞的那一单成交后也不许把剩下的条目接着扫完
+    if not pageActive then RoundDone(); return end
     if i > #list then RoundDone(); return end
     if pending then RoundDone(); return end         -- 上一笔还没结束, 下一轮再说
 
     local e = list[i]
     if not e.p or e.p <= 0 then again(); return end
+    if e.on == false then again(); return end          -- 这一条被暂停扫描了
+
+    -- 本轮排队之后可能又成交了几单: 买够上限就跳过
+    if M.BoughtQty(e.id) >= M.QtyOf(e.id) then
+        local info = lastInfo[e.id]
+        if info then info.tag = "max" end
+        RefreshInfo(e.id)
+        again(); return
+    end
 
     local AH = ns.Auction
     if not (AH and AH.CheckRecipe) then RoundDone(); return end
 
-    -- 把「单个物品」当成一个没有材料的配方: out.unit[id].unit 就是最低单价
-    AH.CheckRecipe({ item = e.id, mats = {}, made = 1 }, function(out)
-        if tok ~= roundToken then return end
-        local pe = out and out.unit and out.unit[e.id]
-        local unit = pe and pe.unit
+    local info = lastInfo[e.id]
+    if not info then info = {}; lastInfo[e.id] = info end
 
-        if not unit or unit <= 0 then again(); return end
-        if unit > e.p then again(); return end                  -- 高于上限: 不买
+    -- 优先用查价缓存 (界面查价 / 手动买入 / 上次扫描留下的价; 有价缓存 30 分钟)。
+    -- 不要每次都 force 重查: 有些客户端重复查同一物品会返回空, 表现就是「无货」,
+    -- 但手动买入用缓存却能成功。缓存有价就直接走手动买入那条链。
+    local cached = AH.Price and AH.Price(e.id)
+    local unit = cached and cached.unit
 
-        -- 没有单轮总额度了: 每件各自按「单笔上限 / 背包放得下 / 钱够」算一笔。
-        -- 买完这一笔, 下一轮再买 —— 间隔可以调到 1 秒, 补货不用等一分钟。
-        local qty, why = BuyQty(e.id, unit)
-        if qty < 1 then
-            if why == "bag" then BagNotice() end
-            again(); return
+    if unit and unit > 0 then
+        info.unit = unit
+        info.at = NowT()
+        info.tag = "none"
+
+        lastAt[e.id] = NowT()
+        scans[e.id] = (scans[e.id] or 0) + 1
+
+        -- 只评估能不能买, 不在这里下单 (客户端只接受玩家点击上下文里的购买)
+        if M.BoughtQty(e.id) >= M.QtyOf(e.id) then
+            info.tag = "max"
+        elseif unit > e.p then
+            info.tag = "over"
+            NoteFail(e.id, "最低价高于上限")
+        else
+            local room, why = BuyQty(e.id, unit)
+            if room < 1 then
+                info.tag = (why == "bag") and "bag" or "money"
+                NoteFail(e.id, (why == "bag") and "背包满" or "金币不够")
+            else
+                info.tag = "ready"      -- 可买: 等玩家点行上的「买入」
+            end
         end
 
-        local name = NameText(e.id)
-        local ok = StartPurchase(e.id, qty, unit, name)
-        if not ok then again(); return end
+        RefreshInfo(e.id)
+        again(); return
+    end
 
-        -- 下单成功: 交给 FinishPurchase 收尾, 它在购买事件回来后会从这里接着往下跑。
-        -- 这里不能直接 again() —— pending 期间本轮必须停下, 否则会并发下一单。
-        resumeList, resumeIdx = list, i + 1
+    -- 缓存里没有价: 查一次, 本轮只记录, 下一轮用缓存价
+    AH.CheckRecipe({ item = e.id, mats = {}, made = 1 }, function(out)
+        if tok ~= roundToken then return end
+
+        -- 这一条算扫过一次 (不管有没有挂单、买没买成); 行上的「扫 N」和频率判定都用它
+        lastAt[e.id] = NowT()
+        scans[e.id] = (scans[e.id] or 0) + 1
+
+        local pe = out and out.unit and out.unit[e.id]
+        local u = pe and pe.unit
+
+        info.unit = u
+        info.at = NowT()
+        info.tag = "none"
+
+        if not u or u <= 0 then
+            NoteFail(e.id, "拍卖行没有挂单")
+        elseif u > e.p then
+            info.tag = "over"
+            NoteFail(e.id, "最低价高于上限")
+        end
+        RefreshInfo(e.id)
+        again()
     end, nil, true)
 end
 
-function M.Scan()
-    if scanning then return false, "上一轮还没跑完" end
-    if not M.Enabled() then return false, "自动购买没开" end
+--------------------------------------------------------------------------- 页面驱动的扫描
 
-    local list = M.List()
-    if #list == 0 then return false, "列表是空的" end
+-- 只有自动购买列表页开着才扫: 打开页面调 StartPage, 关页面/切页调 StopPage。
+-- ticker 一秒一次, 只把「到了自己频率」的条目拎出来查价, 所以每个商品可以设不同间隔。
+
+local function Tick()
+    if not pageActive then return end
+    if buying then return end          -- 买入弹窗开着: 别发查询覆盖拍卖行的当前搜索结果
+
+    -- 兜底: 购买/查询回调万一丢了, 别让 pending / scanning 永远卡住扫描
+    local t = NowT()
+    if pending and t - (pending.at or 0) > BUY_TIMEOUT + 5 then
+        local p = pending
+        pending = nil
+        scanning = false
+        roundToken = roundToken + 1
+        NoteFail(p.id, "购买超时")
+        local mc = manualDone
+        manualDone = nil
+        if mc then pcall(mc, false, "超时") end
+        Notice("|cffff9955自动购买请求超时|r 已跳过这一笔")
+    end
+    if scanning and t - lastScan > 30 then
+        scanning = false
+        roundToken = roundToken + 1
+    end
+
+    if scanning or pending then return end          -- 上一轮 / 上一笔还没收尾
 
     local AH = ns.Auction
-    if not (AH and AH.CanQuery) then return false, "拍卖行模块未加载" end
-    local ok, why = AH.CanQuery()
-    if not ok then return false, why end
+    if not (AH and AH.CanQuery) then return end
+    local can = AH.CanQuery()
+    if not can then return end                       -- 拍卖行没开: 等下一次 tick
+
+    local now = NowT()
+    local due = {}
+    local bought = Bought()
+    for id, e in pairs(Cfg()) do
+        if (e.p or 0) > 0 and e.on ~= false then
+            -- 买够总数上限的条目不再进队列 (行上会显示「够数」)
+            local q = tonumber(e.q) or QTY_DEFAULT
+            if q < QTY_MIN then q = QTY_MIN end
+            if (tonumber(bought[id]) or 0) < q then
+                local gap = tonumber(e.gap) or GAP_DEFAULT
+                if gap < GAP_MIN then gap = GAP_MIN end
+                local last = lastAt[id]
+                if not last or now - last >= gap then
+                    due[#due + 1] = { id = id, p = e.p, gap = gap }
+                end
+            end
+        end
+    end
+    if #due == 0 then return end
+    table.sort(due, function(a, b) return a.id < b.id end)
 
     scanning = true
     roundToken = roundToken + 1
-    lastScan = NowT()
-    RoundStep(list, 1)
+    lastScan = now
+    RoundStep(due, 1)
+end
+
+function M.StartPage()
+    pageActive = true
+    if ticker then return end
+    if not (C_Timer and C_Timer.NewTicker) then return end
+    ticker = C_Timer.NewTicker(1, Tick)              -- 每秒调度一次
+    C_Timer.After(0.2, Tick)                         -- 打开页面先扫一轮, 不用干等 1 秒
+end
+
+function M.StopPage()
+    pageActive = false
+    buying = false
+    if ticker then
+        pcall(function() ticker:Cancel() end)
+        ticker = nil
+    end
+    -- 让正在飞的那一轮作废: 页面关了就不再往下查/下单
+    scanning = false
+    roundToken = roundToken + 1
+end
+
+function M.PageActive()
+    return pageActive
+end
+
+-- 买入弹窗打开期间暂停扫描 (弹窗的查价/购买是同一套拍卖行上下文)
+function M.SetBuying(on)
+    buying = on and true or false
+end
+
+-- 手动触发一次调度 (调试用; 页面没开就不做)
+function M.Scan()
+    if not pageActive then return false, "自动购买页没开" end
+    Tick()
     return true
 end
 
@@ -589,31 +912,6 @@ end
 
 function M.LastScan()
     return lastScan
-end
-
---------------------------------------------------------------------------- 定时器
-
-function M.Start()
-    if ticker then return end
-    if not M.Enabled() then return end
-    if not (C_Timer and C_Timer.NewTicker) then return end
-
-    ticker = C_Timer.NewTicker(M.Gap(), function() M.Scan() end)
-    -- 启动时先扫一轮, 不用干等一分钟
-    C_Timer.After(2, function() M.Scan() end)
-end
-
-function M.Stop()
-    if ticker then
-        pcall(function() ticker:Cancel() end)
-        ticker = nil
-    end
-    scanning = false
-    roundToken = roundToken + 1
-end
-
-function M.Running()
-    return ticker ~= nil
 end
 
 --------------------------------------------------------------------------- 事件: 购买结果 + 拍卖行开关
@@ -628,26 +926,125 @@ end
 Hook("COMMODITY_PURCHASE_SUCCEEDED")
 Hook("COMMODITY_PURCHASE_FAILED")
 Hook("COMMODITY_PURCHASED")
-Hook("AUCTION_HOUSE_SHOW")
-Hook("AUCTION_HOUSE_CLOSED")
+Hook("BAG_UPDATE_DELAYED")
 
 ev:SetScript("OnEvent", function(_, event)
+    diag.events[event] = (diag.events[event] or 0) + 1
+    diag.lastEvent = { at = NowT(), name = event }
+
     if event == "COMMODITY_PURCHASE_SUCCEEDED" or event == "COMMODITY_PURCHASED" then
         FinishPurchase(true)
     elseif event == "COMMODITY_PURCHASE_FAILED" then
-        FinishPurchase(false, "拍卖行拒绝了这一单")
-    elseif event == "AUCTION_HOUSE_SHOW" then
-        -- 只有开着拍卖行才启动: 关着的时候每分钟空转没意义, 查价也必然失败
-        if M.Enabled() then M.Start() end
-    elseif event == "AUCTION_HOUSE_CLOSED" then
-        M.Stop()
+        local why = "拍卖行拒绝了这一单"
+        if pending then
+            if Money() < (pending.unit or 0) * (pending.qty or 1) then
+                why = "金币不足"
+            elseif type(GetNumFreeBagSlots) == "function" then
+                local ok, free = pcall(GetNumFreeBagSlots)
+                if ok and free == 0 then why = "背包没有空格" end
+            end
+        end
+        FinishPurchase(false, why)
+    elseif event == "BAG_UPDATE_DELAYED" then
+        -- 没有购买事件的客户端: 背包里这件数量涨了就当这一单成交
+        if pending and Delivered(pending) then FinishPurchase(true) end
     end
 end)
+
+--------------------------------------------------------------------------- 诊断
+
+-- /wgm 自动 诊断: 看客户端到底有没有购买接口/事件, 以及最近一单卡在哪一步
+function M.Diag()
+    local api = _G.C_AuctionHouse
+    ns.Print("自动购买诊断:")
+    print(format("  自动购买条目: %d", M.Count()))
+
+    local kinds = {}
+    for k in pairs(Cfg()) do
+        kinds[type(k)] = (kinds[type(k)] or 0) + 1
+    end
+    for k, n in pairs(kinds) do
+        print(format("    键类型 %s: %d", k, n))
+    end
+
+    print("  C_AuctionHouse: " .. (api and "有" or "|cffff5555无"))
+
+    print(format("  页面: %s · 扫描中: %s · ticker: %s",
+        M.PageActive() and "开着" or "|cffff9955关着|r",
+        M.Scanning() and "是" or "否",
+        ticker and "在" or "|cffff5555无|r"))
+
+    local auction = ns.Auction
+    if auction and auction.CanQuery then
+        local okQuery = auction.CanQuery()
+        print("  拍卖行: " .. (okQuery and "可查询" or "|cffff9955未打开|r"))
+    end
+
+    local function has(n)
+        return (api and type(api[n]) == "function") and "有" or "|cffff5555无"
+    end
+    print("  StartCommoditiesPurchase: " .. has("StartCommoditiesPurchase"))
+    print("  ConfirmCommoditiesPurchase: " .. has("ConfirmCommoditiesPurchase"))
+    print("  SendSearchQuery: " .. has("SendSearchQuery"))
+
+    local names = {
+        "COMMODITY_PURCHASE_SUCCEEDED",
+        "COMMODITY_PURCHASE_FAILED",
+        "COMMODITY_PURCHASED",
+        "BAG_UPDATE_DELAYED",
+    }
+    for _, name in ipairs(names) do
+        print(format("  事件 %s: %s · 收到 %d 次", name,
+            M.Hooks[name] and "已注册" or "|cffff5555注册失败",
+            diag.events[name] or 0))
+    end
+
+    local ls = diag.lastStart
+    if ls then
+        print(format("  最近下单: #%d ×%d · %s · 返回 %s",
+            ls.id, ls.qty, ls.ok and "成功" or "|cffff5555报错", ls.ret))
+    else
+        print("  最近下单: 无")
+    end
+
+    local lc = diag.lastConfirm
+    if lc then
+        print(format("  最近确认: #%d ×%d · %s · 返回 %s",
+            lc.id, lc.qty, lc.ok and "成功" or "|cffff5555报错", lc.ret))
+    else
+        print("  最近确认: 无")
+    end
+
+    local le = diag.lastEvent
+    print("  最近事件: " .. (le and (le.name .. format(" (%.1fs)", le.at)) or "无"))
+    local lt = diag.lastTimeout
+    if lt then print(format("  最近超时: #%d ×%d", lt.id, lt.qty)) end
+    if pending then print(format("  当前 pending: #%d ×%d", pending.id, pending.qty)) end
+
+    local money = Money()
+    local free = FreeSlots()
+    print(format("  金币: %s · 背包空格: %s",
+        (money == math.huge) and "接口不可用" or tostring(money),
+        free and tostring(free) or "接口不可用"))
+
+    local lf = diag.lastFail
+    if lf then
+        print(format("  最近失败: #%d · %s (%.1f 秒前)", lf.id, lf.reason, NowT() - lf.at))
+    else
+        print("  最近失败: 无")
+    end
+
+    local now = NowT()
+    for _, e in ipairs(M.List()) do
+        local last = lastAt[e.id]
+        print(format("  #%d ≤ %s/个 · 每 %d 秒 · 已买 %d/%d · 上次扫描 %s",
+            e.id, MoneyText(e.p), e.gap, M.BoughtQty(e.id), e.q,
+            last and format("%.1f 秒前", now - last) or "从未"))
+    end
+end
 
 --------------------------------------------------------------------------- 摘要
 
 function M.Summary()
-    return format("%s · %d 件 · 每 %d 秒 · 有货就买",
-        M.Enabled() and "|cff4dc87a开着|r" or "|cffeb6b6b关着|r",
-        M.Count(), M.Gap())
+    return format("%d 件 · 页面开着就按每行频率扫描", M.Count())
 end

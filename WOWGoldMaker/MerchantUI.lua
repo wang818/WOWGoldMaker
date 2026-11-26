@@ -41,6 +41,7 @@ local SEARCH_H = 22
 local LIST_Y   = -58     -- 列表区顶部
 local LIST_BOT = 26      -- 列表区距面板底部 (给页脚留位)
 local ITEM_H   = 24      -- 物品行高
+local AUTO_H   = 34      -- 自动购买页行高: 上排名字/扫描结论, 下排频率/金额编辑
 local NPC_H    = 17      -- 商人子行高
 local BAR_W    = 3       -- 滚动条宽
 local SCROLL_STEP = 60   -- 滚轮一格
@@ -60,7 +61,7 @@ local frame, content, contentW
 local scroll, listContent, track, thumb, sbar
 local searchEdit, searchHint, clearBtn
 local sortBtn, filterBtn, countText, emptyText
-local shopTab, favTab, autoTab, autoSetBtn, footerHint
+local shopTab, favTab, footerHint
 local itemPool, npcPool = {}, {}
 local itemUsed, npcUsed = 0, 0
 
@@ -477,7 +478,9 @@ function M.Sort(list, mode)
 end
 
 -- 扁平行表: 物品行 + (展开时) 商人子行。纯计算, 不碰界面。
-function M.BuildView(list, openSet)
+-- rowH 由调用方按页给: 自动购买页是两行高 (AUTO_H), 其余页用 ITEM_H。
+function M.BuildView(list, openSet, rowH)
+    rowH = rowH or ITEM_H
     local v = { entries = {}, off = {}, n = 0, height = 0 }
     local d = M.Index()
     local y = 0
@@ -485,7 +488,7 @@ function M.BuildView(list, openSet)
         v.n = v.n + 1
         v.entries[v.n] = { rec = rec }
         v.off[v.n] = y
-        y = y + ITEM_H
+        y = y + rowH
 
         if openSet[rec.id] then
             for _, npcID in ipairs(rec.npcs) do
@@ -514,6 +517,17 @@ end
 local function MoneyShort(c)
     if ns.NPC and ns.NPC.Money then return ns.NPC.Money(c) end
     return tostring(c)
+end
+
+-- 纯文本金额 (不带颜色码): 行内 EditBox 不认 |cff... 码, 只能放这种
+local function MoneyPlain(c)
+    c = math.max(0, math.floor(tonumber(c) or 0))
+    local g = math.floor(c / 10000)
+    local s = math.floor((c % 10000) / 100)
+    local k = c % 100
+    if g > 0 then return format("%d金%d银%d铜", g, s, k) end
+    if s > 0 then return format("%d银%d铜", s, k) end
+    return format("%d铜", k)
 end
 
 -- 粗略文字宽度 (中文 ≈ 字号, 数字/字母 ≈ 字号 x 0.55), 跳过 |cffRRGGBB 颜色码。
@@ -782,9 +796,14 @@ local function ItemTooltip(anchor, rec)
         GameTooltip:AddLine(name, 1, 1, 1)
         GameTooltip:AddLine(" ")
         GameTooltip:AddLine(format("单价上限 %s/个", Money(rec.autoP or 0)), 1, 0.82, 0.35)
-        local have = (ns.AutoBuy and ns.AutoBuy.Have and ns.AutoBuy.Have(rec.id)) or 0
+        local AB = ns.AutoBuy
+        GameTooltip:AddLine(format("每 %d 秒扫一次 · 本次已扫 %d 次",
+            (AB and AB.GapOf and AB.GapOf(rec.id)) or 1,
+            (AB and AB.Scans and AB.Scans(rec.id)) or 0), 0.82, 0.84, 0.88)
+        local have = (AB and AB.Have and AB.Have(rec.id)) or 0
         GameTooltip:AddLine(format("背包 %d 个 · 拍卖行低于上限就买", have), 0.82, 0.84, 0.88)
-        GameTooltip:AddLine("|cff8a929e左键改价 / 移除 · 右键在拍卖行搜索|r", 0.55, 0.58, 0.62)
+        GameTooltip:AddLine("|cff8a929e行内改频率/上限后点「确认」 · 行尾 × 删除 · 右键在拍卖行搜索|r",
+            0.55, 0.58, 0.62)
         GameTooltip:Show()
         return
     end
@@ -847,6 +866,151 @@ local function NewItemRow()
     r.price:SetWidth(PRICE_W)
     r.price:SetJustifyH("RIGHT")
 
+    ------------------------------------------------------------------ 自动购买页的行内编辑器
+    -- 自动页行高 AUTO_H = 两行:
+    --   第一行 (y=+8): 名字 + [价格][结果][累计买到][扫 N]
+    --   第二行 (y=-8): [频率]秒[确认] [金额上限][确认] [×]
+    -- 只在自动购买页显示 (PaintItem 控制)。每个都是独立控件, 吃鼠标事件,
+    -- 所以点输入框 / 确认 / 删除都不会顺带触发行本身的点击。
+    r.scanText = Font(r, F_TIP, C.faint)
+    r.scanText:SetWidth(38)
+    r.scanText:SetJustifyH("RIGHT")
+    r.scanText:SetPoint("RIGHT", r, "RIGHT", -4, 8)
+    r.scanText:SetText("扫0")
+    r.scanText:Hide()
+
+    -- 扫描结论, 排在「扫 N」前面 (从左到右: 价格 → 结果 → 累计买到):
+    --   价格   = 这次查到的最低价 (无货时显示 —)
+    --   结果   = 买到 / 下单 / 无货 / 超价 / 满包 / 没钱 / 失败
+    --   累计   = 本次会话这条成功买入的总数量
+    r.boughtTotal = Font(r, F_TIP, C.faint)
+    r.boughtTotal:SetWidth(44)
+    r.boughtTotal:SetJustifyH("RIGHT")
+    r.boughtTotal:SetPoint("RIGHT", r, "RIGHT", -46, 8)
+    r.boughtTotal:SetText("共0")
+    r.boughtTotal:Hide()
+
+    r.lastResult = Font(r, F_TIP, C.muted)
+    r.lastResult:SetWidth(40)
+    r.lastResult:SetJustifyH("RIGHT")
+    r.lastResult:SetPoint("RIGHT", r, "RIGHT", -94, 8)
+    r.lastResult:SetText("")
+    r.lastResult:Hide()
+
+    r.lastPrice = Font(r, F_TIP, C.gold)
+    r.lastPrice:SetWidth(62)
+    r.lastPrice:SetJustifyH("RIGHT")
+    r.lastPrice:SetPoint("RIGHT", r, "RIGHT", -138, 8)
+    r.lastPrice:SetText("—")
+    r.lastPrice:Hide()
+
+    local function NewField(w)
+        local cell = T.Line(r, w, 18, C.white, 0.06)
+        -- 接住鼠标: 点在输入框边缘的空白上也不该顺带把行点开 (那是「改价」弹窗)
+        cell:EnableMouse(true)
+        cell:SetScript("OnMouseDown", function() end)
+        cell:Hide()
+        local eb = CreateFrame("EditBox", nil, cell)
+        eb:SetSize(w - 8, 14)
+        eb:SetPoint("LEFT", cell, "LEFT", 4, 0)
+        eb:SetFont(T.FontFile(), F_ITEM, "")
+        eb:SetTextColor(T.rgb(C.text))
+        eb:SetAutoFocus(false)
+        eb:SetTextInsets(0, 0, 0, 0)
+        return cell, eb
+    end
+
+    r.gapCell, r.gapBox = NewField(30)
+    r.gapCell:SetPoint("RIGHT", r, "RIGHT", -182, -8)
+    r.gapBox:SetNumeric(true)
+    r.gapBox:SetMaxLetters(4)
+
+    r.gapUnit = Font(r, F_TIP, C.faint)
+    r.gapUnit:SetPoint("RIGHT", r, "RIGHT", -169, -8)
+    r.gapUnit:SetText("秒")
+    r.gapUnit:Hide()
+
+    local function NewTick(tip)
+        local b = CreateFrame("Button", nil, r)
+        b:SetSize(24, 14)
+        b.txt = Font(b, 9, C.faint)
+        b.txt:SetPoint("CENTER", 0, 0)
+        b.txt:SetText("确认")
+        b:SetScript("OnEnter", function()
+            r.bg:SetColorTexture(1, 1, 1, 0.09)
+            b.txt:SetTextColor(T.rgb(C.teal))
+            TooltipAtCursor(b)
+            GameTooltip:ClearLines()
+            GameTooltip:AddLine(tip, 1, 0.82, 0.35)
+            GameTooltip:AddLine("|cff8a929e回车也能提交|r", 0.62, 0.65, 0.70)
+            GameTooltip:Show()
+        end)
+        b:SetScript("OnLeave", function()
+            r.bg:SetColorTexture(1, 1, 1, r.open and 0.05 or 0)
+            b.txt:SetTextColor(T.rgb(C.faint))
+            GameTooltip:Hide()
+        end)
+        b:Hide()
+        return b
+    end
+
+    r.gapOk = NewTick("确认扫描频率")
+    r.gapOk:SetPoint("RIGHT", r, "RIGHT", -140, -8)
+
+    r.capCell, r.capBox = NewField(84)
+    r.capCell:SetPoint("RIGHT", r, "RIGHT", -52, -8)
+    r.capBox:SetMaxLetters(16)
+
+    r.capOk = NewTick("确认单价上限")
+    r.capOk:SetPoint("RIGHT", r, "RIGHT", -24, -8)
+
+    -- 提交行内编辑: 频率 => GapOf/SetGap, 金额 => ParseMoney/Set
+    local function CommitGap()
+        if page ~= "auto" or not r.entry or not ns.AutoBuy then return end
+        local rec = r.entry.rec
+        local n = tonumber(r.gapBox:GetText() or "")
+        if not n then
+            r.gapBox:SetText(tostring(ns.AutoBuy.GapOf(rec.id)))
+            return
+        end
+        local v = ns.AutoBuy.SetGap(rec.id, n)
+        if not v then return end
+        r.gapBox:SetText(tostring(v))
+        r.gapBox:ClearFocus()
+        ns.Print(format("|cff4dc87a扫描频率|r %s → 每 %d 秒", KnownName(rec), v))
+    end
+
+    local function CommitCap()
+        if page ~= "auto" or not r.entry or not ns.AutoBuy then return end
+        local rec = r.entry.rec
+        local v = ns.AutoBuy.ParseMoney(r.capBox:GetText())
+        if not v then
+            r.capBox:SetText(MoneyPlain(ns.AutoBuy.PriceOf(rec.id) or 0))
+            ns.Print("|cffff9955金额看不懂|r 写 1金20银 / 1.5 (金) / 纯数字按铜")
+            return
+        end
+        ns.AutoBuy.Set(rec.id, v)
+        r.capBox:SetText(MoneyPlain(v))
+        r.capBox:ClearFocus()
+        if ns.UI and ns.UI.RefreshNpcAll then pcall(ns.UI.RefreshNpcAll) end
+        ns.Print(format("|cff4dc87a单价上限|r %s → %s", KnownName(rec), MoneyPlain(v)))
+        ApplyQuery()          -- 自动页按上限排序, 改完可能换位置
+    end
+
+    r.gapBox:SetScript("OnEnterPressed", CommitGap)
+    r.gapBox:SetScript("OnEscapePressed", function(eb)
+        eb:SetText(tostring((ns.AutoBuy and r.entry and ns.AutoBuy.GapOf(r.entry.rec.id)) or 1))
+        eb:ClearFocus()
+    end)
+    r.capBox:SetScript("OnEnterPressed", CommitCap)
+    r.capBox:SetScript("OnEscapePressed", function(eb)
+        local p = (ns.AutoBuy and r.entry and ns.AutoBuy.PriceOf(r.entry.rec.id)) or 0
+        eb:SetText(MoneyPlain(p))
+        eb:ClearFocus()
+    end)
+    r.gapOk:SetScript("OnClick", CommitGap)
+    r.capOk:SetScript("OnClick", CommitCap)
+
     r:SetScript("OnEnter", function(s)
         s.bg:SetColorTexture(1, 1, 1, 0.06)
         if s.entry then ItemTooltip(s, s.entry.rec) end
@@ -902,6 +1066,40 @@ local function NewItemRow()
         if page == "fav" then ApplyQuery() else Render() end
         RefreshCount()
         PaintTabs()
+    end)
+
+    -- 自动购买页行尾的「×」: 直接从列表里删掉这一条 (别的页不显示)。
+    -- 子按钮吃鼠标事件, 所以不会顺带触发行的 OnClick。
+    r.delBtn = CreateFrame("Button", nil, r)
+    r.delBtn:SetSize(16, 16)
+    r.delBtn:SetPoint("RIGHT", r, "RIGHT", -4, -8)
+    r.delTxt = Font(r.delBtn, 12, C.faint)
+    r.delTxt:SetPoint("CENTER", 0, 0)
+    r.delTxt:SetText("×")
+    r.delBtn:SetScript("OnEnter", function(s)
+        r.bg:SetColorTexture(1, 1, 1, 0.09)
+        r.delTxt:SetTextColor(T.rgb(C.red))
+        TooltipAtCursor(s)
+        GameTooltip:ClearLines()
+        GameTooltip:AddLine("移出自动购买", 1, 0.55, 0.55)
+        GameTooltip:AddLine("|cff8a929e这一条不再自动买, 设过的单价上限一起删掉|r", 0.62, 0.65, 0.70)
+        GameTooltip:Show()
+    end)
+    r.delBtn:SetScript("OnLeave", function()
+        r.bg:SetColorTexture(1, 1, 1, r.open and 0.05 or 0)
+        r.delTxt:SetTextColor(T.rgb(C.faint))
+        GameTooltip:Hide()
+    end)
+    r.delBtn:SetScript("OnClick", function()
+        if page ~= "auto" or not r.entry then return end
+        local rec = r.entry.rec
+        local name = KnownName(rec)
+        ns.AutoBuy.Remove(rec.id)
+        -- 主面板材料行的「自动」按钮也要跟着变回灰色
+        if ns.UI and ns.UI.RefreshNpcAll then pcall(ns.UI.RefreshNpcAll) end
+        ApplyQuery()
+        PaintTabs()          -- 页签上的「自动 N」和底部提示一起刷新
+        ns.Print(format("|cff8a929e已从自动购买移除|r %s", name))
     end)
     return r
 end
@@ -1018,6 +1216,53 @@ local function PlaceRow(r, y, w)
     r:SetWidth(w)
 end
 
+-- 扫描结论的文字与颜色 (和 AutoBuy 里 lastInfo.tag 对应)
+local SCAN_RESULT = {
+    bought  = { "买到", 0.30, 0.80, 0.50 },
+    pending = { "下单", 0.85, 0.75, 0.35 },
+    none    = { "无货", 0.55, 0.58, 0.62 },
+    over    = { "超价", 0.92, 0.42, 0.42 },
+    bag     = { "满包", 0.95, 0.60, 0.35 },
+    money   = { "没钱", 0.95, 0.60, 0.35 },
+    fail    = { "失败", 0.92, 0.42, 0.42 },
+}
+
+-- 只刷新一条的扫描结论 (扫 N / 价格 / 结果 / 累计买到):
+-- 不重排、不整行重画, 所以不会打断正在编辑的频率/金额输入框。
+local function PaintScanInfo(r, id)
+    local AB = ns.AutoBuy
+    if not (r and AB) then return end
+
+    if r.scanText then
+        r.scanText:SetText("扫" .. tostring((AB.Scans and AB.Scans(id)) or 0))
+    end
+
+    local info = AB.Info and AB.Info(id)
+    if r.lastPrice then
+        if info and info.unit then
+            r.lastPrice:SetText(MoneyPlain(info.unit))
+            r.lastPrice:SetTextColor(T.rgb(C.gold))
+        else
+            r.lastPrice:SetText("—")
+            r.lastPrice:SetTextColor(T.rgb(C.faint))
+        end
+    end
+    if r.lastResult then
+        local v = info and SCAN_RESULT[info.tag]
+        if v then
+            r.lastResult:SetText(v[1])
+            r.lastResult:SetTextColor(v[2], v[3], v[4])
+        else
+            r.lastResult:SetText("")
+        end
+    end
+    if r.boughtTotal then
+        local n = (AB.BoughtQty and AB.BoughtQty(id)) or 0
+        r.boughtTotal:SetText("共" .. tostring(n))
+        r.boughtTotal:SetTextColor(T.rgb(n > 0 and C.teal or C.faint))
+    end
+end
+
 -- 星标: 实心金色 = 已收藏, 空心灰 = 没收藏
 PaintStar = function(r)
     if not r.starText or not r.entry then return end
@@ -1033,33 +1278,80 @@ local function PaintItem(r, e, y, cw)
     r.open = expanded[rec.id] and true or false
     PlaceRow(r, y, cw)
 
+    local isAuto = (page == "auto")
+    -- 自动页是两行高: 名字/结论在第一行 (上移), 频率/金额编辑在第二行 (控件自带 -8 偏移)
+    local topY = isAuto and 8 or 0
+    r:SetHeight(isAuto and AUTO_H or ITEM_H)
+    r.star:ClearAllPoints()
+    r.star:SetPoint("LEFT", r, "LEFT", 0, topY)
+    r.caret:ClearAllPoints()
+    r.caret:SetPoint("LEFT", r, "LEFT", 16, topY)
+    r.icon:ClearAllPoints()
+    r.icon:SetPoint("LEFT", r, "LEFT", 27, topY)
+    r.title:ClearAllPoints()
+    r.title:SetPoint("LEFT", r, "LEFT", 45, topY)
+
     r.bg:SetColorTexture(1, 1, 1, r.open and 0.05 or 0)
     PaintStar(r)
-    local isAuto = (page == "auto")
     r.caret:SetText((not isAuto and #rec.npcs > 0) and (r.open and "-" or "+") or "")
     r.icon:SetTexture(IconOf(rec))
     r.title:SetText(ItemName(rec, true))
 
-    -- 右侧先摆价格, 再让「N 家 / 背包 N」贴在价格左边, 最后把剩下的宽度给名字
-    r.price:ClearAllPoints()
-    r.price:SetPoint("RIGHT", r, "RIGHT", -8, 0)
-    r.cnt:ClearAllPoints()
-    r.cnt:SetPoint("RIGHT", r.price, "LEFT", -6, 0)
-
+    -- 自动购买页: 行尾换成 [扫 N] [频率]秒[确认] [金额上限][确认] [×],
+    -- 原来那两列「N 家 / 价格」隐藏; 别的页反过来。
     if isAuto then
-        -- 自动购买页的「价格」是玩家设的单价上限, 右边挂背包数量而不是商人数
-        local have = (ns.AutoBuy and ns.AutoBuy.Have and ns.AutoBuy.Have(rec.id)) or 0
-        r.cnt:SetText(format("背包 %d", have))
-        r.price:SetText((rec.autoP and rec.autoP > 0) and PriceText(rec.autoP)
-            or "|cff8a929e无上限|r")
+        r.cnt:Hide()
+        r.price:Hide()
+        if r.delBtn then r.delBtn:Show() end
+        if r.scanText then r.scanText:Show() end
+        if r.lastPrice then r.lastPrice:Show() end
+        if r.lastResult then r.lastResult:Show() end
+        if r.boughtTotal then r.boughtTotal:Show() end
+        if r.gapCell then r.gapCell:Show() end
+        if r.gapUnit then r.gapUnit:Show() end
+        if r.gapOk then r.gapOk:Show() end
+        if r.capCell then r.capCell:Show() end
+        if r.capOk then r.capOk:Show() end
+
+        -- 扫 N / 价格 / 结果 / 累计买到 一次画全
+        PaintScanInfo(r, rec.id)
+
+        -- 正在编辑的框不要被重画覆盖 (扫描结论刷新走 RefreshScan, 不整行重画)
+        if r.gapBox and not r.gapBox:HasFocus() then
+            r.gapBox:SetText(tostring(
+                (ns.AutoBuy and ns.AutoBuy.GapOf and ns.AutoBuy.GapOf(rec.id)) or 1))
+        end
+        if r.capBox and not r.capBox:HasFocus() then
+            local p = (ns.AutoBuy and ns.AutoBuy.PriceOf and ns.AutoBuy.PriceOf(rec.id))
+                or rec.autoP or 0
+            r.capBox:SetText(MoneyPlain(p))
+        end
     else
+        if r.delBtn then r.delBtn:Hide() end
+        if r.scanText then r.scanText:Hide() end
+        if r.lastPrice then r.lastPrice:Hide() end
+        if r.lastResult then r.lastResult:Hide() end
+        if r.boughtTotal then r.boughtTotal:Hide() end
+        if r.gapCell then r.gapCell:Hide() end
+        if r.gapUnit then r.gapUnit:Hide() end
+        if r.gapOk then r.gapOk:Hide() end
+        if r.capCell then r.capCell:Hide() end
+        if r.capOk then r.capOk:Hide() end
+
+        r.cnt:Show()
+        r.price:Show()
+        r.price:ClearAllPoints()
+        r.price:SetPoint("RIGHT", r, "RIGHT", -8, 0)
+        r.cnt:ClearAllPoints()
+        r.cnt:SetPoint("RIGHT", r.price, "LEFT", -6, 0)
         r.cnt:SetText(format("%d 家", #rec.npcs))
         local price = PriceOf(rec)
         r.price:SetText(price and PriceText(price) or "|cff8a929e无价|r")
     end
 
-    -- 45 = 星标 14 + 展开符 + 图标 + 间隙; 剩下给名字 (再留 16 给「N 家」前的空)
-    local titleW = cw - 45 - PRICE_W - CNT_W - 16
+    -- 45 = 星标 14 + 展开符 + 图标 + 间隙。
+    -- 自动页第一行的结论列占 204px (价格/结果/累计), 其余给名字; 第二行的编辑控件不影响名字宽度
+    local titleW = isAuto and (cw - 45 - 204) or (cw - 45 - PRICE_W - CNT_W - 16)
     if titleW < 80 then titleW = 80 end
     r.title:SetWidth(titleW)
 end
@@ -1169,7 +1461,7 @@ RefreshCount = function()
         local AB = ns.AutoBuy
         local total = (AB and AB.Count and AB.Count()) or 0
         if #filtered == total and AB and AB.Summary then
-            countText:SetText(AB.Summary())       -- 开关/件数/间隔一眼看全
+            countText:SetText(AB.Summary())       -- 件数 / 扫描说明一眼看全
         elseif #filtered == 0 then
             countText:SetText(format("|cffeb6b6b筛出 0|r |cff8a929e/ %d 件自动购买|r", total))
         else
@@ -1210,15 +1502,9 @@ PaintTabs = function()
         favTab:SetActive(page == "fav")
         favTab.text:SetText(format("收藏 %d", M.FavCount()))
     end
-    if autoTab then
-        autoTab:SetActive(page == "auto")
-        autoTab.text:SetText(format("自动 %d",
-            (ns.AutoBuy and ns.AutoBuy.Count and ns.AutoBuy.Count()) or 0))
-    end
-    if autoSetBtn then autoSetBtn:SetShown(page == "auto") end
     if footerHint then
         footerHint:SetText(page == "auto"
-            and "左键改单价上限 / 移除 · 右键在拍卖行搜索 · 右上角「设置」改开关和间隔"
+            and "页面开着就每秒扫描 · 行内改频率/上限后点「确认」 · 行尾 × 删除 · 右键在拍卖行搜索"
             or "★ 收藏 · 左键物品展开商人 · 左键商人设路径点 · 右键物品在拍卖行搜索")
     end
 end
@@ -1226,6 +1512,11 @@ end
 -- 切页: 换页时清掉搜索词 (从货架搜「瓶」切到收藏, 不该把关键词带过去),
 -- 排序方式如果在新页不存在 (最近收藏), 退回买价。
 SetPage = function(p)
+    -- 自动购买已经独立成自己的窗口 (AutoBuyUI), 商人货架不再有这一页
+    if p == "auto" then
+        if ns.AutoBuyUI and ns.AutoBuyUI.Show then ns.AutoBuyUI.Show() end
+        return
+    end
     page = (p == "fav" or p == "auto") and p or "shop"
     -- 自动购买页进来就按「上限 ↓」排, 不然沿用上页的「最近收藏」会排不动
     if page == "auto" then sortMode = "price" end
@@ -1247,7 +1538,7 @@ ApplyQuery = function(resetScroll)
     if page == "fav" then base = M.FavRecords()
     elseif page == "auto" then base = M.AutoRecords() end
     filtered = M.Sort(M.Filter(q, M.onlyMats, base), sortMode)
-    view = M.BuildView(filtered, expanded)
+    view = M.BuildView(filtered, expanded, page == "auto" and AUTO_H or ITEM_H)
 
     if listContent then
         listContent:SetHeight(math.max(1, view.height))
@@ -1271,6 +1562,18 @@ M.Refresh = function()
     ApplyQuery()
 end
 
+-- 自动购买每扫完一条就调这里: 只改行上的「扫 N / 价格 / 结果 / 累计买到」,
+-- 不重排、不打断正在编辑的输入框。
+function ns.MerchantUI.RefreshScan(id)
+    if page ~= "auto" or not frame or not frame:IsShown() then return end
+    for i = 1, itemUsed do
+        local r = itemPool[i]
+        if r and r:IsShown() and r.entry and r.entry.rec.id == id then
+            PaintScanInfo(r, id)
+        end
+    end
+end
+
 --------------------------------------------------------------------------- 界面
 
 local function BuildTitle(parent)
@@ -1290,21 +1593,10 @@ local function BuildTitle(parent)
     favTab:SetPoint("LEFT", shopTab, "RIGHT", 4, 0)
     favTab:SetScript("OnClick", function() SetPage("fav") end)
 
-    autoTab = NewChip(parent, 68, 18, "自动 0")
-    autoTab:SetPoint("LEFT", favTab, "RIGHT", 4, 0)
-    autoTab:SetScript("OnClick", function() SetPage("auto") end)
-
     countText = T.Text(parent, F_TIP + 1, C.muted)
     countText:SetPoint("RIGHT", close, "LEFT", -10, 0)
     countText:SetWordWrap(false)
     countText:SetText("")
-
-    -- 「设置」只在自动购买页出现: 开关和扫描间隔在那里改 (真花钱的功能, 别藏太深)
-    autoSetBtn = NewChip(parent, 44, 16, "设置")
-    autoSetBtn:SetPoint("RIGHT", countText, "LEFT", -8, 0)
-    autoSetBtn:SetScript("OnClick", function()
-        if ns.UI and ns.UI.AutoBuyConfig then ns.UI.AutoBuyConfig() end
-    end)
 
     footerHint = T.Text(parent, F_TIP, C.faint)
     footerHint:SetPoint("BOTTOMLEFT", parent, "BOTTOMLEFT", PAD, 11)
@@ -1504,6 +1796,11 @@ end
 
 -- p: 打开哪一页 ("shop" 全部货架 / "fav" 我的收藏 / "auto" 自动购买), 不传就留在当前页
 function ns.MerchantUI.Show(p)
+    -- 自动购买已经是独立窗口 (AutoBuyUI), 从这里进来也转过去
+    if p == "auto" then
+        if ns.AutoBuyUI and ns.AutoBuyUI.Show then ns.AutoBuyUI.Show() end
+        return
+    end
     if not frame then
         local ok, err = pcall(ns.MerchantUI.Build)
         if not ok then
@@ -1512,8 +1809,7 @@ function ns.MerchantUI.Show(p)
         end
     end
     if p then
-        page = (p == "fav" or p == "auto") and p or "shop"
-        if page == "auto" then sortMode = "price" end
+        page = (p == "fav") and "fav" or "shop"
         if page ~= "fav" and sortMode == "fav" then sortMode = "price" end
     end
     frame:Show()
@@ -1537,12 +1833,12 @@ function ns.MerchantUI.ShowFav(q)
 end
 
 -- 自动购买列表页。q 可选: 打开时直接带关键词筛名字
-function ns.MerchantUI.ShowAuto(q)
-    ns.MerchantUI.Show("auto")
-    if q and q ~= "" and searchEdit then
-        searchEdit:SetText(q)
-        searchEdit:SetFocus()
-        searchEdit:HighlightText()
+-- 兼容旧入口: 自动购买已经独立成自己的窗口
+function ns.MerchantUI.ShowAuto()
+    if ns.AutoBuyUI and ns.AutoBuyUI.Show then
+        ns.AutoBuyUI.Show()
+    else
+        ns.Print("|cffff5555自动购买窗口未加载|r")
     end
 end
 

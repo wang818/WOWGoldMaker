@@ -42,11 +42,9 @@ local DEFAULTS = {
     favItems   = {},                                      -- 我的收藏: itemID -> 收藏时间 (os.time)
     tipExtra   = false,                                   -- 悬停是否附带配方/单价/盈亏 (默认只显示物品原来的介绍)
 
-    -- 自动购买 (真花钱, 默认全关)
-    autoBuyOn  = false,                                   -- 总开关: 拍卖行开着时按间隔扫一轮
-    autoBuy    = {},                                      -- itemID -> { p = 单价上限(铜) }
-    autoBuyGap = 60,                                      -- 扫描间隔 (秒), 最小 1, 上限不设
-    -- 注: 旧存档里的 autoBuyCap 字段已不再使用, 留着无害 (MergeDefaults 不会删多余键)
+    -- 自动购买 (真花钱; 打开自动购买列表页才扫描, 关掉页面就停)
+    autoBuy    = {},                                      -- itemID -> { p = 单价上限(铜), gap = 频率(秒) }
+    -- 注: 旧存档里的 autoBuyOn / autoBuyGap / autoBuyCap 字段已不再使用, 留着无害
 }
 
 local db
@@ -349,39 +347,41 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
             ns.MerchantUI.Search(kw)
         end
     elseif msg:match("^自动") or msg:match("^auto") then
-        -- 自动购买: 无参数开设置窗, 带子命令直接操作
+        -- 自动购买: 打开列表页就会按每行的频率自动扫描; 子命令用于列表维护
         local AB = ns.AutoBuy
         local sub = (msg:match("^自动%s*(.*)$") or msg:match("^auto%s*(.*)$") or ""):gsub("%s+$", "")
         if not AB then
             ns.Print("|cffff5555自动购买模块未加载|r (检查 AutoBuy.lua 是否在 .toc 里)")
         elseif sub == "" then
-            if ns.UI and ns.UI.AutoBuyConfig then ns.UI.AutoBuyConfig() end
-        elseif sub == "开" or sub == "on" then
-            AB.SetEnabled(true)
-            ns.Print("自动购买已开启 —— " .. AB.Summary())
-            ns.Print(format("|cff8a929e打开拍卖行才会开始扫, 每 %d 秒一轮 (可调)|r", AB.Gap()))
-        elseif sub == "关" or sub == "off" then
-            AB.SetEnabled(false)
-            ns.Print("自动购买已关闭")
+            if ns.AutoBuyUI and ns.AutoBuyUI.Show then
+                ns.AutoBuyUI.Show()
+            else
+                ns.Print("|cffff5555自动购买窗口未加载|r")
+            end
+        elseif sub == "开" or sub == "on" or sub == "关" or sub == "off" then
+            ns.Print("总开关已经去掉: 打开自动购买列表页就开始扫描, 关掉页面就停")
         elseif sub == "扫" or sub == "scan" then
             local ok, why = AB.Scan()
             if ok then
                 ns.Print("开始扫一轮, 成交会在这里报")
             else
-                ns.Print("没扫: " .. tostring(why))
+                ns.Print("没扫: " .. tostring(why) .. " (先打开自动购买列表页)")
             end
         elseif sub == "列" or sub == "list" then
             local list = AB.List()
             if #list == 0 then
                 ns.Print("自动购买列表是空的 —— 在材料行的「自动」按钮里加")
             else
-                ns.Print(format("自动购买 %d 件 (%s):", #list, AB.Enabled() and "已开启" or "已关闭"))
+                ns.Print(format("自动购买 %d 件 (页面开着才扫描):", #list))
                 local AH = ns.Auction
                 for _, e in ipairs(list) do
                     local p = (AH and AH.MoneyEx) and AH.MoneyEx(e.p) or tostring(e.p)
-                    ns.Print(format("  #%d  ≤ %s/个  (背包已有 %d)", e.id, p, AB.Have(e.id)))
+                    ns.Print(format("  #%d  ≤ %s/个 · 每 %d 秒 · 已买 %d/%d",
+                        e.id, p, AB.GapOf(e.id), AB.BoughtQty(e.id), AB.QtyOf(e.id)))
                 end
             end
+        elseif sub == "诊断" or sub == "diag" then
+            if AB.Diag then AB.Diag() else ns.Print("诊断不可用") end
         elseif sub == "清空" or sub == "clear" then
             local list = AB.List()
             for _, e in ipairs(list) do AB.Remove(e.id) end
@@ -390,31 +390,23 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
         elseif sub:match("^加") or sub:match("^add") then
             local id, g = sub:match("(%d+)%s+(%d+)")
             if not (id and g) then
-                ns.Print("用法: /wgm 自动 加 <物品ID> <金>  (只填单价上限, 有挂单就买, 每轮最多 200 个)")
+                ns.Print("用法: /wgm 自动 加 <物品ID> <金>  (单价上限; 频率默认 1 秒, 列表页里可改)")
             else
                 AB.Set(tonumber(id), tonumber(g) * 10000)
-                ns.Print(format("已加入自动购买: #%s ≤ %s 金%s",
-                    id, g, AB.Enabled() and "" or " (总开关还关着)"))
+                ns.Print(format("已加入自动购买: #%s ≤ %s 金", id, g))
                 if ns.MerchantUI and ns.MerchantUI.Refresh then pcall(ns.MerchantUI.Refresh) end
             end
         elseif sub == "面板" or sub == "page" or sub == "ui" then
-            -- 图形界面: 商人货架的第三个页签, 能逐条改价/移除, 顶部还能改开关和间隔
-            if ns.MerchantUI and ns.MerchantUI.ShowAuto then
-                ns.MerchantUI.ShowAuto()
+            if ns.AutoBuyUI and ns.AutoBuyUI.Show then
+                ns.AutoBuyUI.Show()
             else
-                ns.Print("|cffff5555商人货架模块未加载|r")
+                ns.Print("|cffff5555自动购买窗口未加载|r")
             end
         elseif sub:match("^间隔") or sub:match("^频率") or sub:match("^gap") then
-            -- 最小 1 秒, 上限不设: 填多少就多少, 只把 0 / 负数 / 非数字抬到 1 或退回默认
-            local n = tonumber(sub:match("(%d+)"))
-            if not n then
-                ns.Print(format("当前扫描间隔 %d 秒 · 用法: /wgm 自动 间隔 <秒>", AB.Gap()))
-            else
-                ns.Print(format("扫描间隔改成 %d 秒%s", AB.SetGap(n),
-                    AB.Enabled() and "" or " (总开关还关着)"))
-            end
+            -- 全局间隔已经去掉: 频率是每个条目自己的, 在列表行里改
+            ns.Print("扫描频率现在按条目单独设置 —— 打开自动购买列表, 行内的 [频率]秒 框改完点「确认」")
         else
-            ns.Print("用法: /wgm 自动 [开|关|扫|列|面板|清空|间隔 <秒>|加 <ID> <金>]")
+            ns.Print("用法: /wgm 自动 [扫|列|面板|清空|加 <ID> <金>]")
         end
     elseif msg:match("^search") or msg:match("^搜索") then
         -- 手动试一下「在拍卖行里搜索某件物品」, 不用去列表里点
@@ -496,9 +488,9 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
         print("  |cffe8c25a/wgm 货架 <词>|r  打开商人货架并搜索 (物品名或商人名)")
         print("  |cffe8c25a/wgm 收藏|r       打开「我的收藏」(货架行首点 ★ 收进来)")
         print("  |cffe8c25a/wgm 收藏 <词>|r  在我的收藏里搜索")
-        print("  |cffe8c25a/wgm 自动|r       自动购买设置 (真花钱, 默认关)")
-        print("  |cffe8c25a/wgm 自动 面板|r    打开自动购买列表 (可改价/移除)")
-        print("  |cffe8c25a/wgm 自动 间隔 <秒>|r 改扫描间隔 (最小 1 秒, 不设上限)")
+        print("  |cffe8c25a/wgm 自动|r       打开自动购买列表 (页面开着就每秒扫描)")
+        print("  |cffe8c25a/wgm 自动 列|r     列出条目 (单价上限 / 频率 / 背包)")
+        print("  |cffe8c25a/wgm 自动 扫|r     立刻扫一轮 (先打开列表页)")
         print("  |cffe8c25a/wgm vendor report|r 商人价目表 / 当前货架报告")
         print("  |cffe8c25a/wgm stock|r      商人货架 (同 /wgm 商人)")
         print("  |cffe8c25a/wgm tip <ID>|r   诊断物品提示 (为什么只有名字 / 没有描述)")

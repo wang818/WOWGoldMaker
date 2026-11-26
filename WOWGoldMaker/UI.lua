@@ -695,10 +695,20 @@ local function BuildTabs(f)
         tabs[prof.key] = tab
     end
 
-    -- 右侧: 商人货架 / 配方·材料汇总 切换
-    -- 商人货架是独立窗口 (MerchantUI.lua), 这里只放进入口 —— 主面板一行塞不下页签了
+    -- 右侧 (从右往左): 材料汇总 / 商人 / 自动购买
+    -- 商人货架和自动购买列表都是独立窗口 (MerchantUI.lua), 这里只放入口 ——
+    -- 主面板一行塞不下页签了。三个按钮用链式锚点从右往左排, 宽度加起来不挤到专业页签。
+    local sw = MakeMiniButton(f, 58, TAB_H, "材料汇总")
+    sw:SetPoint("TOPRIGHT", f, "TOPRIGHT", -(PAD - 6), TAB_Y)
+    sw:SetScript("OnClick", function()
+        curMode = (curMode == "list") and "mats" or "list"
+        sw.text:SetText(curMode == "list" and "材料汇总" or "配方列表")
+        if RenderList then RenderList() end
+    end)
+    refs.switchBtn = sw
+
     local vendorBtn = MakeMiniButton(f, 46, TAB_H, "商人")
-    vendorBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -(PAD - 6) - 72, TAB_Y)
+    vendorBtn:SetPoint("RIGHT", sw, "LEFT", -6, 0)
     vendorBtn:SetScript("OnClick", function()
         if ns.MerchantUI and ns.MerchantUI.Toggle then ns.MerchantUI.Toggle() end
     end)
@@ -720,14 +730,29 @@ local function BuildTabs(f)
     end)
     refs.vendorBtn = vendorBtn
 
-    local sw = MakeMiniButton(f, 66, TAB_H, "材料汇总")
-    sw:SetPoint("TOPRIGHT", f, "TOPRIGHT", -(PAD - 6), TAB_Y)
-    sw:SetScript("OnClick", function()
-        curMode = (curMode == "list") and "mats" or "list"
-        sw.text:SetText(curMode == "list" and "材料汇总" or "配方列表")
-        if RenderList then RenderList() end
+    -- 自动购买入口: 打开商人货架的「自动」页, 在那儿改上限或删条目
+    local autoBtn = MakeMiniButton(f, 34, TAB_H, "自动")
+    autoBtn:SetPoint("RIGHT", vendorBtn, "LEFT", -6, 0)
+    autoBtn:SetScript("OnClick", function()
+        if ns.AutoBuyUI and ns.AutoBuyUI.Toggle then ns.AutoBuyUI.Toggle() end
     end)
-    refs.switchBtn = sw
+    autoBtn:SetScript("OnEnter", function(s)
+        s.bg:SetVertexColor(1, 1, 1, 0.20)
+        s.text:SetTextColor(T.rgb(C.text))
+        GameTooltip:SetOwner(s, "ANCHOR_CURSOR_RIGHT")
+        GameTooltip:ClearLines()
+        GameTooltip:AddLine("自动购买", 1, 0.82, 0.35)
+        GameTooltip:AddLine("|cff8a929e打开列表就开始扫描 (关掉页面即停), 每行可改频率和单价上限|r", 0.82, 0.84, 0.88)
+        GameTooltip:AddLine("|cff8a929e行内改完点「确认」生效 · 行尾 × 删除|r", 0.82, 0.84, 0.88)
+        GameTooltip:AddLine("|cff8a929e/wgm 自动|r 也能打开这个列表", 0.55, 0.58, 0.62)
+        GameTooltip:Show()
+    end)
+    autoBtn:SetScript("OnLeave", function(s)
+        s.bg:SetVertexColor(1, 1, 1, 0.10)
+        s.text:SetTextColor(T.rgb(C.muted))
+        GameTooltip:Hide()
+    end)
+    refs.autoBtn = autoBtn
 end
 
 UpdateTabs = function()
@@ -2867,6 +2892,9 @@ local function BuildAutoEditor()
 
     -- 商人货架开着「自动购买」页时, 这里的增删改要立刻反映到那边
     local function RefreshAutoList()
+        if ns.AutoBuyUI and ns.AutoBuyUI.RefreshAll then
+            pcall(ns.AutoBuyUI.RefreshAll)
+        end
         if ns.MerchantUI and ns.MerchantUI.Refresh then
             pcall(ns.MerchantUI.Refresh)
         end
@@ -2897,10 +2925,9 @@ local function BuildAutoEditor()
         f:Hide()
         RefreshCell(id)
         RefreshAutoList()
-        -- 明确告诉玩家「加进去了, 但要不要真买取决于总开关」—— 免得以为设置完就会自动买
-        ns.UI.Notify(format("已加入自动购买: %s · ≤ %s/个 · 有货就买%s",
-            f.label or ("#" .. id), ns.NPC.MoneyEx(total),
-            ns.AutoBuy.Enabled() and "" or " (总开关还关着)"), 4)
+        -- 说清楚「扫描只在自动购买列表页开着时进行」—— 免得以为设置完就会自己买
+        ns.UI.Notify(format("已加入自动购买: %s · ≤ %s/个 · 打开自动购买页就开始扫",
+            f.label or ("#" .. id), ns.NPC.MoneyEx(total)), 4)
     end
 
     local allBoxes = { boxes[1], boxes[2], boxes[3] }
@@ -3161,6 +3188,10 @@ local function BuildBuyEditor()
 
     f.box, f.who, f.hint = box, who, hint
     f.refreshHint, f.doBuy = RefreshHint, DoBuy
+    -- 弹窗关掉/购买结束时恢复自动扫描
+    f:SetScript("OnHide", function()
+        if ns.AutoBuy and ns.AutoBuy.SetBuying then ns.AutoBuy.SetBuying(false) end
+    end)
     f:Hide()
     buyEditor = f
     return buyEditor
@@ -3203,6 +3234,8 @@ function ns.UI.BuyItem(itemID, name)
 
     f:ClearAllPoints()
     f:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    -- 弹窗开着时暂停自动扫描: 别让后台查询覆盖拍卖行的当前搜索结果
+    if ns.AutoBuy and ns.AutoBuy.SetBuying then ns.AutoBuy.SetBuying(true) end
     f:Show()
     f.box:SetFocus()
     if f.box.HighlightText then f.box:HighlightText() end
@@ -3218,128 +3251,16 @@ function ns.UI.BuyItem(itemID, name)
     end, true)
 end
 
---------------------------------------------------------------------------- 自动购买总开关
+--------------------------------------------------------------------------- 自动购买设置 (已并入列表页)
 
--- 开关 + 扫描间隔在这里改 (单价上限在材料行的「自动」按钮里), 免得玩家改存档文件
-local autoCfg
-
-local function BuildAutoCfg()
-    if autoCfg then return autoCfg end
-    if not UIParent then return nil end
-
-    -- 和改价浮窗一样挂 UIParent: 商人货架页上的「设置」按钮也能打开它
-    -- 去掉「单轮最多花」那一行之后矮了一截; 提示仍然是两行
-    local f = T.Glass(UIParent, 320, 168, "panel")
-    f:SetFrameStrata(ns.DB().strata or "DIALOG")
-    -- 主面板可能还没建 (从商人货架直接点进来), 取不到层级就用个固定基数
-    local baseLevel = (frame and frame.GetFrameLevel) and frame:GetFrameLevel() or 200
-    f:SetFrameLevel(baseLevel + 20)
-    -- 主面板是 Toplevel 的 (见 ns.UI.ApplyStrata), 同层里它会盖住所有普通浮窗 ——
-    -- 浮窗也得是 Toplevel, 再靠上面高 20 的 level 排在它前面
-    f:SetToplevel(true)
-    f:SetClampedToScreen(true)
-    f:EnableMouse(true)
-    f:SetMovable(true)
-    f:RegisterForDrag("LeftButton")
-    f:SetScript("OnDragStart", function(s) s:StartMoving() end)
-    f:SetScript("OnDragStop", function(s) s:StopMovingOrSizing() end)
-
-    local title = T.Text(f, 11, C.gold)
-    title:SetPoint("TOPLEFT", 14, -12)
-    title:SetText("自动购买 · 设置")
-
-    local state = T.Text(f, 9, C.muted)
-    state:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -6)
-    state:SetWidth(292)
-    state:SetWordWrap(false)
-
-    local toggle = MakeMiniButton(f, 76, 20, "开启")
-    toggle:SetPoint("TOPLEFT", state, "BOTTOMLEFT", 0, -8)
-    toggle:SetScript("OnClick", function()
-        ns.AutoBuy.SetEnabled(not ns.AutoBuy.Enabled())
-        if autoCfg and autoCfg.paint then autoCfg.paint() end
-    end)
-
-    local scan = MakeMiniButton(f, 76, 20, "立即扫一轮")
-    scan:SetPoint("LEFT", toggle, "RIGHT", 6, 0)
-    scan:SetScript("OnClick", function()
-        local ok, why = ns.AutoBuy.Scan()
-        if not ok and why then ns.UI.Notify("没扫: " .. why, 3) end
-    end)
-
-    -- 扫描间隔: 以前写死 60 秒, 现在玩家自己填。最小 1 秒 (再小就等于连打查询,
-    -- 只会把节流额度吃光), 上限不设 —— 想几分钟看一眼也随他。
-    -- 「单轮最多花」那一行已经去掉了: 现在没有总花费上限, 只有每件的单价上限。
-    local gapLabel = T.Text(f, 9, C.faint)
-    gapLabel:SetPoint("TOPLEFT", toggle, "BOTTOMLEFT", 0, -10)
-    gapLabel:SetWidth(72)
-    gapLabel:SetText("扫描间隔")
-
-    local gapBox = CreateFrame("EditBox", nil, f)
-    gapBox:SetSize(56, 16)
-    gapBox:SetPoint("LEFT", gapLabel, "RIGHT", 6, 0)
-    gapBox:SetFont(T.FontFile(), 11, "")
-    gapBox:SetTextColor(T.rgb(C.text))
-    gapBox:SetAutoFocus(false)
-    gapBox:SetNumeric(true)
-    gapBox:SetMaxLetters(5)                   -- 秒, 99999 秒 (27 小时) 已经远超需要
-    gapBox:SetTextInsets(1, 1, 0, 0)
-    gapBox:SetScript("OnEnterPressed", function(b)
-        -- 空着按回车 = 恢复默认间隔 (60 秒), 而不是被当成 0 抬到 1 秒
-        local txt = (b:GetText() or ""):gsub("%s", "")
-        local n = ns.AutoBuy.SetGap(txt == "" and nil or tonumber(txt))
-        -- 填 0 / 负数 / 乱码都归一化后回填, 玩家一眼能看出实际生效的是多少
-        b:SetText(tostring(n))
-        b:ClearFocus()
-        if autoCfg and autoCfg.paint then autoCfg.paint() end
-        ns.UI.Notify(format("扫描间隔改成 %d 秒", n), 3)
-    end)
-    gapBox:SetScript("OnEscapePressed", function(b) b:ClearFocus() end)
-
-    local gapUnit = T.Text(f, 9, C.faint)
-    gapUnit:SetPoint("LEFT", gapBox, "RIGHT", 4, 0)
-    gapUnit:SetText("秒")
-
-    local hint = T.Text(f, 8, C.faint)
-    hint:SetPoint("TOPLEFT", gapLabel, "BOTTOMLEFT", 0, -10)
-    hint:SetWidth(292)
-    hint:SetWordWrap(false)
-
-    local hint2 = T.Text(f, 8, C.faint)
-    hint2:SetPoint("TOPLEFT", hint, "BOTTOMLEFT", 0, -4)
-    hint2:SetWidth(292)
-    hint2:SetWordWrap(false)
-    -- 单笔上限的数值从 AutoBuy 取, 免得两处各写一个 200 后来改漏
-    hint2:SetText(format("最小 1 秒 · 每件每轮 %d 个 · 无总额上限 · 背包满会停",
-        (ns.AutoBuy and ns.AutoBuy.Order and ns.AutoBuy.Order()) or 200))
-
-    local close = MakeMiniButton(f, 54, 18, "关闭窗口")
-    close:SetPoint("BOTTOMRIGHT", -14, 12)
-    close:SetScript("OnClick", function() f:Hide() end)
-
-    f.paint = function()
-        local on = ns.AutoBuy.Enabled()
-        toggle.text:SetText(on and "关闭" or "开启")
-        toggle.text:SetTextColor(T.rgb(on and C.gold or C.muted))
-        state:SetText(ns.AutoBuy.Summary())
-        state:SetTextColor(T.rgb(on and C.text or C.muted))
-        local gap = ns.AutoBuy.Gap()
-        gapBox:SetText(tostring(gap))
-        hint:SetText(format("打开拍卖行后每 %d 秒扫一轮 · 有挂单且单价不高于设定值就买", gap))
-    end
-
-    f:Hide()
-    autoCfg = f
-    return autoCfg
-end
-
+-- 总开关和全局间隔已经去掉: 打开自动购买列表页就按每一行自己的频率扫描。
+-- 这个入口保留成兼容函数 —— 老快捷键/老代码调到它时, 直接打开自动购买列表。
 function ns.UI.AutoBuyConfig()
-    local f = BuildAutoCfg()
-    if not f then return end
-    f.paint()
-    f:ClearAllPoints()
-    f:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
-    f:Show()
+    if ns.AutoBuyUI and ns.AutoBuyUI.Show then
+        ns.AutoBuyUI.Show()
+    else
+        ns.UI.Notify("自动购买窗口未加载", 3)
+    end
 end
 
 
