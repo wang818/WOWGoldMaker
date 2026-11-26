@@ -817,6 +817,29 @@ local function BuildTabs(f)
         GameTooltip:Hide()
     end)
     refs.profitBtn = profitBtn
+
+    -- 在售商品: 列出自己的挂单, 查最低价/排名, 快速上架
+    local listingsBtn = MakeMiniButton(f, 40, TAB_H, "在售")
+    listingsBtn:SetPoint("RIGHT", profitBtn, "LEFT", -6, 0)
+    listingsBtn:SetScript("OnClick", function()
+        if ns.ListingsUI and ns.ListingsUI.Toggle then ns.ListingsUI.Toggle() end
+    end)
+    listingsBtn:SetScript("OnEnter", function(s)
+        s.bg:SetVertexColor(1, 1, 1, 0.20)
+        s.text:SetTextColor(T.rgb(C.text))
+        GameTooltip:SetOwner(s, "ANCHOR_CURSOR_RIGHT")
+        GameTooltip:ClearLines()
+        GameTooltip:AddLine("在售商品", 1, 0.82, 0.35)
+        GameTooltip:AddLine("|cff8a929e自己的挂单 / 拍卖行最低价 / 价格排名 / 快速上架|r", 0.82, 0.84, 0.88)
+        GameTooltip:AddLine("|cff8a929e需要拍卖行窗口打开|r", 0.62, 0.65, 0.70)
+        GameTooltip:Show()
+    end)
+    listingsBtn:SetScript("OnLeave", function(s)
+        s.bg:SetVertexColor(1, 1, 1, 0.10)
+        s.text:SetTextColor(T.rgb(C.muted))
+        GameTooltip:Hide()
+    end)
+    refs.listingsBtn = listingsBtn
 end
 
 UpdateTabs = function()
