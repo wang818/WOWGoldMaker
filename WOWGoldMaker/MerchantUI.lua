@@ -62,6 +62,7 @@ local scroll, listContent, track, thumb, sbar
 local searchEdit, searchHint, clearBtn
 local sortBtn, filterBtn, countText, emptyText
 local shopTab, favTab, footerHint
+local sellProfitBtn
 local itemPool, npcPool = {}, {}
 local itemUsed, npcUsed = 0, 0
 
@@ -69,6 +70,14 @@ local view = { entries = {}, off = {}, n = 0, height = 0 }   -- 当前渲染用�
 local filtered = {}          -- 当前筛选结果 (物品记录数组)
 local expanded = {}          -- itemID -> true (展开了商人子行)
 local page = "shop"          -- "shop" = 全部货架, "fav" = 我的收藏, "auto" = 自动购买
+local sellProfit = false     -- 商人货架「赚金」筛选开关
+local sellProfitCache = {}   -- itemID -> 利润(铜), 只留 > 0 的显示
+local sellProfitAt = 0       -- 上次查完的时间 (GetTime)
+local sellProfitRun = 0      -- 轮次 (再点一次可取消)
+local sellProfitBusy = false -- 正在逐条查价 (按钮显示「查价中」)
+local sellProfitUnit = {}    -- itemID -> 查到的 AH 最低单价 (行上显示用)
+local sellBusyItem = nil     -- 正在查价的物品 ID (该行背景变黄 + 按钮查价中)
+local SELL_PROFIT_TTL = 3600 -- 赚金缓存 1 小时
 
 -- 前向声明 (下面几处互相引用)
 local Render, UpdateThumb, RefreshCount, ApplyQuery, SetPage, PaintTabs, PaintStar
@@ -372,6 +381,7 @@ local SORTS = {
     { key = "fav",   label = "最近收藏", favOnly = true },
 }
 local sortMode = "price"
+local priceDesc = false      -- 价格排序方向: false = 正序(低→高), true = 倒序
 
 local function SortLabel(key)
     -- 自动购买页的 price 字段装的是「单价上限」, 按钮别再写「买价」
@@ -452,7 +462,14 @@ function M.Sort(list, mode)
         end)
     elseif mode == "price" then
         table.sort(list, function(a, b)
-            if a.price ~= b.price then return a.price > b.price end
+            local pa, pb = a.price or 0, b.price or 0
+            if pa ~= pb then return pa > pb end
+            return a.id < b.id
+        end)
+    elseif mode == "priceAsc" then
+        table.sort(list, function(a, b)
+            local pa, pb = a.price or 0, b.price or 0
+            if pa ~= pb then return pa < pb end
             return a.id < b.id
         end)
     elseif mode == "npcs" then
@@ -475,6 +492,15 @@ function M.Sort(list, mode)
         end)
     end
     return list
+end
+
+-- 点击价格列: 在价格正序 / 倒序之间切换
+function M.TogglePriceSort()
+    priceDesc = not priceDesc
+    if footerHint then
+        footerHint:SetText(priceDesc and "价格: 高 → 低 (点价格列切换)" or "价格: 低 → 高 (点价格列切换)")
+    end
+    ApplyQuery(true)
 end
 
 -- 扁平行表: 物品行 + (展开时) 商人子行。纯计算, 不碰界面。
@@ -528,6 +554,20 @@ local function MoneyPlain(c)
     if g > 0 then return format("%d金%d银%d铜", g, s, k) end
     if s > 0 then return format("%d银%d铜", s, k) end
     return format("%d铜", k)
+end
+
+-- 原生金/银/铜色 (金=黄, 银=银白, 铜=铜色), 拍卖行价格用这个, 不给整行套一种颜色
+local function MoneyColored(c)
+    c = math.max(0, math.floor(tonumber(c) or 0))
+    if c <= 0 then return "|cff9d9d9d0铜|r" end
+    local g = math.floor(c / 10000)
+    local s = math.floor((c % 10000) / 100)
+    local k = c % 100
+    local out = {}
+    if g > 0 then out[#out + 1] = format("|cffffd700%d金|r", g) end
+    if s > 0 then out[#out + 1] = format("|cffc7c7cf%d银|r", s) end
+    if k > 0 or #out == 0 then out[#out + 1] = format("|cffb87333%d铜|r", k) end
+    return table.concat(out)
 end
 
 -- 粗略文字宽度 (中文 ≈ 字号, 数字/字母 ≈ 字号 x 0.55), 跳过 |cffRRGGBB 颜色码。
@@ -825,7 +865,7 @@ local function ItemTooltip(anchor, rec)
         GameTooltip:AddLine("快照里没有买价", 0.62, 0.65, 0.70)
     end
     GameTooltip:AddLine(format("|cff8a929e%d 位商人有售|r", #rec.npcs), 0.82, 0.84, 0.88)
-    GameTooltip:AddLine("|cff8a929e左键展开名单 · 右键在拍卖行搜索|r", 0.55, 0.58, 0.62)
+    GameTooltip:AddLine("|cff8a929e左键到拍卖行搜索 · 点 + 展开商人名单|r", 0.55, 0.58, 0.62)
     GameTooltip:Show()
 end
 
@@ -842,8 +882,8 @@ local function ApplyAhPrice(r)
     end
 
     if r.ahPrice then
-        r.ahPrice:SetTextColor(T.rgb(C.teal))
-        r.ahPrice:SetText("AH " .. MoneyPlain(r.ahUnit))
+        r.ahPrice:SetTextColor(1, 1, 1)
+        r.ahPrice:SetText("|cff8a929eAH|r " .. MoneyColored(r.ahUnit))
     end
 
     if r.profitText then
@@ -909,6 +949,18 @@ local function NewItemRow()
     r.caret = Font(r, F_NPC, C.muted)
     r.caret:SetPoint("LEFT", 16, 0)
 
+    -- 前面的 + 号单独做成按钮: 只有点它才展开/收起商人名单, 点物品名是去拍卖行搜索
+    r.caretBtn = CreateFrame("Button", nil, r)
+    r.caretBtn:SetSize(14, ITEM_H)
+    r.caretBtn:SetPoint("LEFT", r, "LEFT", 14, 0)
+    r.caretBtn:SetScript("OnClick", function()
+        local e = r.entry
+        if not (e and e.rec) then return end
+        local id = e.rec.id
+        if expanded[id] then expanded[id] = nil else expanded[id] = true end
+        ApplyQuery()
+    end)
+
     r.icon = r:CreateTexture(nil, "ARTWORK")
     r.icon:SetSize(14, 14)
     r.icon:SetPoint("LEFT", 27, 0)
@@ -924,6 +976,12 @@ local function NewItemRow()
     r.price = Font(r, F_ITEM, C.gold)
     r.price:SetWidth(PRICE_W)
     r.price:SetJustifyH("RIGHT")
+
+    -- 点价格列切换排序方向 (默认价格正序, 再点倒序)
+    r.priceBtn = CreateFrame("Button", nil, r)
+    r.priceBtn:SetSize(PRICE_W, ITEM_H)
+    r.priceBtn:SetPoint("RIGHT", r, "RIGHT", -150, 0)
+    r.priceBtn:SetScript("OnClick", function() M.TogglePriceSort() end)
 
     -- 新加的一列: AH 售价 (上) + 盈亏 (下); 未查价时留空, NPC 售价在左边那列
     r.ahPrice = Font(r, F_ITEM, C.teal)
@@ -954,7 +1012,11 @@ local function NewItemRow()
         r.quoteBtn.txt:SetTextColor(T.rgb(C.text))
     end)
     r.quoteBtn:SetScript("OnLeave", function()
-        r.bg:SetColorTexture(1, 1, 1, r.open and 0.05 or 0)
+        if sellBusyItem and r.entry and r.entry.rec and r.entry.rec.id == sellBusyItem then
+            r.bg:SetColorTexture(1, 0.85, 0.25, 0.20)
+        else
+            r.bg:SetColorTexture(1, 1, 1, r.open and 0.05 or 0)
+        end
         r.quoteBtn.bg:SetColorTexture(1, 1, 1, 0.10)
         r.quoteBtn.txt:SetTextColor(T.rgb(C.muted))
     end)
@@ -1125,12 +1187,8 @@ local function NewItemRow()
             if ns.UI and ns.UI.EditAutoBuy then ns.UI.EditAutoBuy(rec.id, KnownName(rec), r) end
             return
         end
-        if expanded[rec.id] then
-            expanded[rec.id] = nil
-        else
-            expanded[rec.id] = true
-        end
-        ApplyQuery()
+        -- 左键点物品 = 到拍卖行搜索 (和首页一致); 展开名单点前面的 +
+        if ns.UI and ns.UI.SearchInAH then ns.UI.SearchInAH(rec.id, KnownName(rec)) end
     end)
 
     -- 星标: 收藏 / 取消收藏。子按钮吃掉了鼠标事件, 所以不会顺带把行展开。
@@ -1388,9 +1446,14 @@ local function PaintItem(r, e, y, cw)
     r.title:ClearAllPoints()
     r.title:SetPoint("LEFT", r, "LEFT", 45, topY)
 
-    r.bg:SetColorTexture(1, 1, 1, r.open and 0.05 or 0)
+    if sellBusyItem == rec.id then
+        r.bg:SetColorTexture(1, 0.85, 0.25, 0.20)   -- 查价中: 黄色底
+    else
+        r.bg:SetColorTexture(1, 1, 1, r.open and 0.05 or 0)
+    end
     PaintStar(r)
     r.caret:SetText((not isAuto and #rec.npcs > 0) and (r.open and "-" or "+") or "")
+    r.caretBtn:SetShown((not isAuto) and #rec.npcs > 0)
     r.icon:SetTexture(IconOf(rec))
     r.title:SetText(ItemName(rec, true))
 
@@ -1399,6 +1462,7 @@ local function PaintItem(r, e, y, cw)
     if isAuto then
         r.cnt:Hide()
         r.price:Hide()
+        if r.priceBtn then r.priceBtn:Hide() end
         if r.quoteBtn then r.quoteBtn:Hide() end
         if r.ahPrice then r.ahPrice:Hide() end
         if r.profitText then r.profitText:Hide() end
@@ -1440,7 +1504,17 @@ local function PaintItem(r, e, y, cw)
 
         r.cnt:Show()
         r.price:Show()
+        if r.priceBtn then r.priceBtn:Show() end
         if r.quoteBtn then r.quoteBtn:Show() end
+        if r.quoteBtn then
+            if sellBusyItem == rec.id then
+                r.quoteBtn:Disable()
+                r.quoteBtn.txt:SetText("查价中")
+            else
+                r.quoteBtn:Enable()
+                r.quoteBtn.txt:SetText("查价")
+            end
+        end
         if r.ahPrice then r.ahPrice:Show() end
         if r.profitText then r.profitText:Show() end
         r.price:ClearAllPoints()
@@ -1451,6 +1525,10 @@ local function PaintItem(r, e, y, cw)
         r.price:SetTextColor(T.rgb(C.gold))
         local price = PriceOf(rec)
         r.price:SetText(price and PriceText(price) or "|cff8a929e无价|r")
+        -- 赚金批量查过价的物品: 重画后仍然显示 AH 价和盈亏
+        if not r.ahUnit and sellProfitUnit[rec.id] then
+            r.ahUnit = sellProfitUnit[rec.id]
+        end
         ApplyAhPrice(r)
     end
 
@@ -1610,7 +1688,7 @@ PaintTabs = function()
     if footerHint then
         footerHint:SetText(page == "auto"
             and "页面开着就每秒扫描 · 行内改频率/上限后点「确认」 · 行尾 × 删除 · 右键在拍卖行搜索"
-            or "★ 收藏 · 左键物品展开商人 · 左键商人设路径点 · 右键物品在拍卖行搜索")
+            or "★ 收藏 · 左键物品到拍卖行搜索 · 点 + 展开商人 · 左键商人设路径点")
     end
 end
 
@@ -1623,10 +1701,6 @@ SetPage = function(p)
         return
     end
     page = (p == "fav" or p == "auto") and p or "shop"
-    -- 自动购买页进来就按「上限 ↓」排, 不然沿用上页的「最近收藏」会排不动
-    if page == "auto" then sortMode = "price" end
-    if page ~= "fav" and sortMode == "fav" then sortMode = "price" end
-    if sortBtn then sortBtn.text:SetText(SortLabel(sortMode)) end
     PaintTabs()
     if searchEdit and (searchEdit:GetText() or "") ~= "" then
         searchEdit:ClearFocus()
@@ -1642,7 +1716,19 @@ ApplyQuery = function(resetScroll)
     local base
     if page == "fav" then base = M.FavRecords()
     elseif page == "auto" then base = M.AutoRecords() end
-    filtered = M.Sort(M.Filter(q, M.onlyMats, base), sortMode)
+    local list = M.Filter(q, M.onlyMats, base)
+    M.Sort(list, priceDesc and "price" or "priceAsc")
+    -- 赚金: 只留下拍卖行卖出 (扣 5% 税) 后还能赚的物品
+    if sellProfit and page == "shop" then
+        local kept = {}
+        for _, rec in ipairs(list) do
+            local p = sellProfitCache[rec.id]
+            -- 还没查到的先留着 (别一点赚金就把列表清空); 查完亏钱的才隐藏
+            if p == nil or p > 0 then kept[#kept + 1] = rec end
+        end
+        list = kept
+    end
+    filtered = list
     view = M.BuildView(filtered, expanded, page == "auto" and AUTO_H or ITEM_H)
 
     if listContent then
@@ -1665,6 +1751,171 @@ M.Refresh = function()
     if not frame then return end
     PaintTabs()
     ApplyQuery()
+end
+
+-- 商人货架「赚金」: 按钮文字/高亮
+local function PaintSellProfitBtn()
+    if not sellProfitBtn then return end
+    if sellProfitBusy then
+        sellProfitBtn.text:SetText("查价中")
+        sellProfitBtn:SetActive(true)
+        return
+    end
+    sellProfitBtn.text:SetText(sellProfit and "全部" or "赚金")
+    sellProfitBtn:SetActive(sellProfit)
+end
+
+-- 对当前筛选后的结果逐条查价: 赚钱的留下, 不赚钱的立刻隐藏这一行; 结果缓存 1 小时
+local function RunSellProfit()
+    local AH = ns.Auction
+    if not (AH and AH.CheckRecipe) then
+        ns.Print("|cffff9955拍卖行模块未加载|r")
+        return
+    end
+    local ok, why = AH.CanQuery()
+    if not ok then
+        ns.Print("|cffff9955" .. tostring(why) .. "|r")
+        return
+    end
+
+    -- 只查当前筛选后的结果 (搜索 / 材料已经筛过一遍), 保持原顺序
+    local list = {}
+    for i = 1, #filtered do list[i] = filtered[i] end
+    if #list == 0 then
+        ns.Print("当前筛选没有物品")
+        return
+    end
+
+    -- 确认能查、有物品之后再开筛选, 免得查不了却把列表清空
+    sellProfitRun = sellProfitRun + 1
+    local run = sellProfitRun
+    sellProfit = true
+    sellProfitBusy = true
+    sellProfitCache = {}
+    PaintSellProfitBtn()
+
+    local i, kept, timeouts = 0, 0, 0
+    local function step()
+        if run ~= sellProfitRun then return end
+        i = i + 1
+        local rec = list[i]
+        if not rec then
+            sellProfitAt = GetTime()
+            sellBusyItem = nil
+            sellProfitBusy = false
+            PaintSellProfitBtn()
+            for _, p in pairs(sellProfitCache) do
+                if p and p > 0 then kept = kept + 1 end
+            end
+            if footerHint then
+                footerHint:SetText("★ 收藏 · 左键物品到拍卖行搜索 · 点 + 展开商人 · 左键商人设路径点")
+            end
+            ApplyQuery()
+            ns.Print(format("|cffe8c25a[赚金]|r 查完 %d 条, 赚钱 %d 条 (缓存 1 小时)", #list, kept))
+            return
+        end
+        local npc = PriceOf(rec)
+        if not npc or npc <= 0 then
+            step(); return
+        end
+
+        -- 这一行查价中: 背景变黄, 按钮显示「查价中」
+        sellBusyItem = rec.id
+        pcall(ApplyQuery)
+
+        -- 和首页「赚钱」一样: 直接查拍卖行, 查完一条立刻决定隐藏/保留
+        local finished = false
+        local function done(u, timeout)
+            if finished then return end
+            finished = true
+            sellBusyItem = nil
+            if run ~= sellProfitRun then return end
+            if u then
+                timeouts = 0
+                sellProfitUnit[rec.id] = u
+                sellProfitCache[rec.id] = math.floor(u * 0.95) - npc
+            elseif timeout then
+                timeouts = timeouts + 1
+                if timeouts >= 3 then
+                    -- 连续 3 条都没回话: 拍卖行不可查, 停掉并提示
+                    sellProfitRun = sellProfitRun + 1
+                    sellProfit = false
+                    sellProfitBusy = false
+                    PaintSellProfitBtn()
+                    if footerHint then
+                        footerHint:SetText("★ 收藏 · 左键物品到拍卖行搜索 · 点 + 展开商人 · 左键商人设路径点")
+                    end
+                    ApplyQuery(true)
+                    ns.Print("|cffff9955[赚金]|r 拍卖行连续 3 条没有回话, 先打开拍卖行再试")
+                    return
+                end
+            else
+                timeouts = 0
+                -- 确认没有挂单: 没得卖, 隐藏这一行
+                sellProfitCache[rec.id] = -1
+            end
+            pcall(ApplyQuery)
+            if footerHint then footerHint:SetText(format("赚金查价 %d/%d …", i, #list)) end
+            -- 拍卖行搜索有频率限制: 每条之间随机等 2~3 秒
+            C_Timer.After(2 + math.random(), step)
+        end
+
+        AH.CheckRecipe({ item = rec.id, mats = {}, made = 1 }, function(out)
+            if run ~= sellProfitRun then return end
+            local pe = out and out.unit and out.unit[rec.id]
+            done(pe and pe.unit)
+        end, nil, true)
+        C_Timer.After(5, function()
+            if run ~= sellProfitRun then return end
+            done(nil, true)
+        end)
+    end
+
+    if footerHint then footerHint:SetText(format("赚金查价 0/%d …", #list)) end
+    ns.Print(format("|cffe8c25a[赚金]|r 开始逐条查 %d 条…", #list))
+    step()
+end
+
+local function ToggleSellProfit()
+    -- 正在逐条查价: 再点一下就是停止 (按钮显示「查价中」)
+    if sellProfitBusy then
+        sellProfitBusy = false
+        sellProfit = false
+        sellBusyItem = nil
+        sellProfitRun = sellProfitRun + 1
+        PaintSellProfitBtn()
+        if footerHint then
+            footerHint:SetText("★ 收藏 · 左键物品到拍卖行搜索 · 点 + 展开商人 · 左键商人设路径点")
+        end
+        ApplyQuery(true)
+        ns.Print("|cffe8c25a[赚金]|r 已停止查价")
+        return
+    end
+
+    if sellProfit then
+        sellProfit = false
+        sellBusyItem = nil
+        sellProfitRun = sellProfitRun + 1
+        PaintSellProfitBtn()
+        if footerHint then
+            footerHint:SetText("★ 收藏 · 左键物品到拍卖行搜索 · 点 + 展开商人 · 左键商人设路径点")
+        end
+        ApplyQuery(true)
+        return
+    end
+
+    -- 1 小时内查过就直接用缓存过滤, 不重新查
+    local now = GetTime()
+    if sellProfitAt > 0 and (now - sellProfitAt) <= SELL_PROFIT_TTL and next(sellProfitCache) then
+        sellProfit = true
+        PaintSellProfitBtn()
+        ApplyQuery(true)
+        ns.Print(format("|cffe8c25a[赚金]|r 用 %d 分钟前的缓存 (1 小时内有效)",
+            math.floor((now - sellProfitAt) / 60)))
+        return
+    end
+
+    RunSellProfit()
 end
 
 -- 自动购买每扫完一条就调这里: 只改行上的「扫 N / 价格 / 结果 / 累计买到」,
@@ -1705,7 +1956,7 @@ local function BuildTitle(parent)
 
     footerHint = T.Text(parent, F_TIP, C.faint)
     footerHint:SetPoint("BOTTOMLEFT", parent, "BOTTOMLEFT", PAD, 11)
-    footerHint:SetText("★ 收藏 · 左键物品展开商人 · 左键商人设路径点 · 右键物品在拍卖行搜索")
+    footerHint:SetText("★ 收藏 · 左键物品到拍卖行搜索 · 点 + 展开商人 · 左键商人设路径点")
     footerHint:SetWordWrap(false)
 end
 
@@ -1756,28 +2007,21 @@ local function BuildSearch(parent)
 
     box:SetScript("OnMouseUp", function() searchEdit:SetFocus() end)
 
-    -- 排序 / 筛选
+    -- 筛选 / 赚金 (排序固定按价格, 点价格列切换正/倒序)
     local x = PAD + boxW + 10
-    sortBtn = NewChip(parent, 78, SEARCH_H, SortLabel(sortMode))
-    sortBtn:SetPoint("TOPLEFT", parent, "TOPLEFT", x, SEARCH_Y)
-    sortBtn:SetScript("OnClick", function()
-        local modes = SortModes()
-        local i = 1
-        for k, v in ipairs(modes) do if v.key == sortMode then i = k end end
-        i = i % #modes + 1
-        sortMode = modes[i].key
-        sortBtn.text:SetText(modes[i].label)
-        ApplyQuery()
-    end)
-
     filterBtn = NewChip(parent, 60, SEARCH_H, "全部")
-    filterBtn:SetPoint("TOPLEFT", parent, "TOPLEFT", x + 86, SEARCH_Y)
+    filterBtn:SetPoint("TOPLEFT", parent, "TOPLEFT", x, SEARCH_Y)
     filterBtn:SetScript("OnClick", function()
         M.onlyMats = not M.onlyMats
         filterBtn.text:SetText(M.onlyMats and "材料" or "全部")
         filterBtn:SetActive(M.onlyMats)
         ApplyQuery(true)
     end)
+
+    -- 赚金: 在「全部」右侧, 只留拍卖行卖出后还赚钱的 (1 小时内复用缓存)
+    sellProfitBtn = NewChip(parent, 60, SEARCH_H, "赚金")
+    sellProfitBtn:SetPoint("TOPLEFT", parent, "TOPLEFT", x + 66, SEARCH_Y)
+    sellProfitBtn:SetScript("OnClick", function() ToggleSellProfit() end)
 end
 
 local function BuildList(parent)
@@ -1915,11 +2159,9 @@ function ns.MerchantUI.Show(p)
     end
     if p then
         page = (p == "fav") and "fav" or "shop"
-        if page ~= "fav" and sortMode == "fav" then sortMode = "price" end
     end
     frame:Show()
     pcall(function() frame:Raise() end)
-    if sortBtn then sortBtn.text:SetText(SortLabel(sortMode)) end
     PaintTabs()
     -- 每次打开都是新的一次浏览: 上次的搜索词跟过去只会让人困惑
     -- (ShowFav 传了关键词的话会在下面重新填上)

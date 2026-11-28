@@ -414,6 +414,12 @@ SlashCmdList["WOWGOLDMAKER"] = function(msg)
         else
             ns.Print("|cffff5555在售模块未加载|r")
         end
+    elseif msg == "背包" or msg == "bag" then
+        if ns.BagUI and ns.BagUI.Show then
+            ns.BagUI.Show()
+        else
+            ns.Print("|cffff5555背包模块未加载|r")
+        end
     elseif msg:match("^search") or msg:match("^搜索") then
         -- 手动试一下「在拍卖行里搜索某件物品」, 不用去列表里点
         local id = tonumber(msg:match("(%d+)") or "")

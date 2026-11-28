@@ -840,6 +840,29 @@ local function BuildTabs(f)
         GameTooltip:Hide()
     end)
     refs.listingsBtn = listingsBtn
+
+    -- 背包: 列出背包里的物品, 点一行到拍卖行搜索
+    local bagBtn = MakeMiniButton(f, 40, TAB_H, "背包")
+    bagBtn:SetPoint("RIGHT", listingsBtn, "LEFT", -6, 0)
+    bagBtn:SetScript("OnClick", function()
+        if ns.BagUI and ns.BagUI.Toggle then ns.BagUI.Toggle() end
+    end)
+    bagBtn:SetScript("OnEnter", function(s)
+        s.bg:SetVertexColor(1, 1, 1, 0.20)
+        s.text:SetTextColor(T.rgb(C.text))
+        GameTooltip:SetOwner(s, "ANCHOR_CURSOR_RIGHT")
+        GameTooltip:ClearLines()
+        GameTooltip:AddLine("背包", 1, 0.82, 0.35)
+        GameTooltip:AddLine("|cff8a929e列出背包里的所有物品, 点一行到拍卖行搜索|r", 0.82, 0.84, 0.88)
+        GameTooltip:AddLine("|cff8a929e/wgm 背包|r", 0.55, 0.58, 0.62)
+        GameTooltip:Show()
+    end)
+    bagBtn:SetScript("OnLeave", function(s)
+        s.bg:SetVertexColor(1, 1, 1, 0.10)
+        s.text:SetTextColor(T.rgb(C.muted))
+        GameTooltip:Hide()
+    end)
+    refs.bagBtn = bagBtn
 end
 
 UpdateTabs = function()
@@ -1469,7 +1492,11 @@ local function MakeCell(r, k)
     end
     c.hoverOff = function(s)
         c.hl:Hide()
-        r.bg:SetColorTexture(1, 1, 1, r.odd and 0.025 or 0)
+        if profitBusyItem and r.rec and r.rec.item == profitBusyItem then
+            r.bg:SetColorTexture(1, 0.85, 0.25, 0.20)
+        else
+            r.bg:SetColorTexture(1, 1, 1, r.odd and 0.025 or 0)
+        end
         TipEnd(s)
     end
     c:SetScript("OnEnter", function(s) c.hoverOn(s) end)
@@ -1830,7 +1857,13 @@ RenderList = function(keepScroll)
             r.npcPrice:SetWidth(priceW)
 
             r.odd = (i % 2 == 0)
-            r.bg:SetColorTexture(1, 1, 1, r.odd and 0.025 or 0)
+            local busy = (curMode ~= "mats") and profitBusyItem
+                and items[i] and items[i].item == profitBusyItem
+            if busy then
+                r.bg:SetColorTexture(1, 0.85, 0.25, 0.20)   -- 查价中: 黄色底
+            else
+                r.bg:SetColorTexture(1, 1, 1, r.odd and 0.025 or 0)
+            end
 
             if curMode == "mats" then
                 local m = items[i]
